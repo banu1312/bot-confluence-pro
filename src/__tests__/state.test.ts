@@ -133,6 +133,7 @@ describe('StateManager', () => {
     });
 
     it('should detect halt when daily loss exceeded', () => {
+        jest.spyOn(StateManager, 'rolloverIfNeeded').mockImplementation(() => {});
         StateManager.dailyLoss.realizedR['BTCUSDT'] = -5;
         expect(StateManager.isHalted('BTCUSDT', 3)).toBe(true);
     });
