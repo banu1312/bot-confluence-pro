@@ -8,6 +8,10 @@ import {
 
 // Tunable confluence requirements. Toggle individual gates without recompiling logic.
 // PRESET: "Sniper RR" — relaxed gates + high RR threshold for high-reward setups.
+
+// Environment variable override for requireMultiTimeframeFVG
+const REQUIRE_MTF_FVG = process.env.REQUIRE_MTF_FVG === 'true' || process.env.REQUIRE_MTF_FVG === undefined;
+
 export const SMC_CONFIG = {
     requireStructureBias: true,    // HTF 1H must be HH-HL (LONG) or LH-LL (SHORT)
     require4hBias: true,           // 4H must not contradict 1H bias
@@ -16,7 +20,7 @@ export const SMC_CONFIG = {
     requireDisplacement: true,     // FVG-creating candle must be impulsive
     requireOBConfluence: false,    // RELAXED — confluence nice but not essential
     requireNoInducement: false,    // disabled until signal frequency is sufficient
-    requireMultiTimeframeFVG: true, // NEW: require LTF FVG inside HTF FVG
+    requireMultiTimeframeFVG: REQUIRE_MTF_FVG, // NEW: require LTF FVG inside HTF FVG (env: REQUIRE_MTF_FVG)
     killZoneOnly: false,           // only trade London/NY sessions (default OFF)
 
     htf4hSwingLookback: 5,

@@ -18,6 +18,7 @@ async function initBot() {
     console.log(`📊 [RISK] Risk per trade: ${process.env.RISK_PER_TRADE_PCT || '1'}% of equity`);
     console.log(`📊 [ATR] ATR period: ${process.env.ATR_PERIOD || '14'}, SL multiplier: ${process.env.ATR_MULTIPLIER_SL || '2'}`);
     console.log(`📊 [TRAIL] Trailing stop: ${process.env.TRAIL_PCT || '0.005'}% after TP1`);
+    console.log(`📊 [MTF] Multi-timeframe FVG: ${process.env.REQUIRE_MTF_FVG === 'false' ? 'DISABLED' : 'ENABLED'}`);
     console.log("=========================================\n");
 
     // 0. Load persisted state + contract specs (parallel)
