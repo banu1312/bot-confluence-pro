@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="refresh" content="5" />
+    <title>SMC Sniper Bot — Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+<div class="max-w-7xl mx-auto p-6">
+
+    <header class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-2xl font-bold tracking-tight">🦾 SMC Sniper Bot</h1>
+            <p class="text-xs text-slate-500 mt-1">auto-refresh 5s · UTC date: <%= daily.date %></p>
+        </div>
+        <div class="text-right">
+            <p class="text-xs text-slate-500 uppercase">Open positions</p>
+            <p class="text-2xl font-mono font-bold"><%= positions.length %></p>
+        </div>
+    </header>
+
+    <!-- Stats row -->
+    <section class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-slate-900 p-4 rounded-xl border border-slate-800">
+            <p class="text-xs text-slate-500 uppercase">Wallet Equity</p>
+            <% if (wallet) { %>
+                <p class="text-xl font-mono text-blue-400 font-bold">$<%= wallet.equity.toFixed(2) %></p>
+                <p class="text-[10px] text-slate-600 mt-1">avail: $<%= wallet.available.toFixed(2) %> · refreshed <%= wallet.ageSec %>s ago</p>
+            <% } else { %>
+                <p class="text-xl font-mono text-slate-600 font-bold">—</p>
+                <p class="text-[10px] text-slate-600 mt-1">API not responding</p>
+            <% } %>
+        </div>
+        <div class="bg-slate-900 p-4 rounded-xl border border-slate-800">
+            <p class="text-xs text-slate-500 uppercase">Unrealized PnL</p>
+            <% if (wallet) { %>
+                <p class="text-xl font-mono font-bold <%= wallet.unrealizedPL >= 0 ? 'text-emerald-400' : 'text-rose-400' %>">
+                    <%= wallet.unrealizedPL >= 0 ? '+' : '' %>$<%= wallet.unrealizedPL.toFixed(2) %>
+                </p>
+                <p class="text-[10px] text-slate-600 mt-1">across all positions</p>
+            <% } else { %>
+                <p class="text-xl font-mono text-slate-600 font-bold">—</p>
+            <% } %>
+        </div>
+        <div class="bg-slate-900 p-4 rounded-xl border border-slate-800">
+            <p class="text-xs text-slate-500 uppercase">Today's Net</p>
+            <p class="text-xl font-mono font-bold <%= daily.totalR >= 0 ? 'text-emerald-400' : 'text-rose-400' %>">
+                <%= daily.totalR >= 0 ? '+' : '' %><%= daily.totalR.toFixed(2) %>R
+            </p>
+            <p class="text-[10px] text-slate-600 mt-1">
+                ≈ <%= daily.totalUSDT >= 0 ? '+' : '' %>$<%= daily.totalUSDT.toFixed(2) %> @ $<%= config.marginPerTrade %>/trade
+            </p>
+        </div>
+        <div class="bg-slate-900 p-4 rounded-xl border border-slate-800">
+            <p class="text-xs text-slate-500 uppercase">Today's Activity</p>
+            <p class="text-xl font-mono text-amber-400 font-bold"><%= daily.tradeCount %> coins</p>
+            <p class="text-[10px] text-slate-600 mt-1">
+                <span class="text-emerald-400"><%= daily.winCount %>W</span>
+                · <span class="text-rose-400"><%= daily.lossCount %>L</span>
+            </p>
+        </div>
+    </section>
+
+    <!-- Monitored coins (TradingView-style candle charts, 3 cols x 5 rows) -->
+    <section class="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-6">
+        <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
+            <div class="flex items-center gap-3">
+                <h2 class="text-sm uppercase text-slate-500 font-semibold">Monitored coins · <%= tf === '1h' ? '1H' : '5m' %> candles · <%= charts.length %>/16</h2>
+                <div class="flex gap-1 bg-slate-950 p-0.5 rounded-md">
+                    <a href="?tf=5m" class="px-3 py-1 text-xs rounded transition font-semibold <%= tf === '5m' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200' %>">5m</a>
+                    <a href="?tf=1h" class="px-3 py-1 text-xs rounded transition font-semibold <%= tf === '1h' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200' %>">1H</a>
+                </div>
+            </div>
+            <div class="flex items-center gap-3 text-xs text-slate-500">
+                <span class="flex items-center gap-1"><span class="inline-block w-4 h-[3px] bg-slate-300 rounded"></span>Entry</span>
+                <span class="flex items-center gap-1"><span class="inline-block w-4 h-[3px] bg-yellow-400 rounded"></span>SL</span>
+                <span class="flex items-center gap-1"><span class="inline-block w-4 h-[3px] bg-blue-500 rounded"></span>TP</span>
+                <span class="text-slate-600">— dashed = plan preview, solid = active position</span>
+            </div>
+        </div>
+        <% if (charts.length === 0) { %>
+            <p class="text-xs text-slate-600">Bot is fetching market data…</p>
+        <% } else { %>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <% charts.forEach((c, i) => { %>
+                    <div class="bg-slate-950 rounded-lg border overflow-hidden <%= c.position
+                            ? (c.position.side === 'LONG' ? 'border-emerald-600' : 'border-rose-600')
+                            : 'border-slate-800' %>">
+                        <div class="flex justify-between items-center px-2 py-1.5 border-b border-slate-800">
+                            <div class="flex items-center gap-2">
+                                <span class="text-sm font-bold text-slate-200"><%= c.shortName %></span>
+                                <% if (c.position) { %>
+                                    <span class="text-[9px] px-1.5 py-0.5 rounded font-bold <%= c.position.side === 'LONG' ? 'bg-emerald-900/70 text-emerald-300' : 'bg-rose-900/70 text-rose-300' %>">
+                                        <%= c.position.side %>
+                                    </span>
+                                <% } else if (c.plan) { %>
+                                    <% const statusColor = c.plan.status === 'READY' ? 'bg-emerald-900/70 text-emerald-300' : (c.plan.status === 'WAITING' ? 'bg-amber-900/70 text-amber-300' : 'bg-rose-900/70 text-rose-400'); %>
+                                    <span class="text-[9px] px-1.5 py-0.5 rounded font-bold <%= statusColor %>">
+                                        <%= c.plan.side === 'LONG' ? '↑' : '↓' %> <%= c.plan.status %>
+                                    </span>
+                                <% } else { %>
+                                    <span class="text-[9px] px-1.5 py-0.5 rounded font-bold bg-slate-800 text-slate-500">
+                                        NO PLAN
+                                    </span>
+                                <% } %>
+                            </div>
+                            <div class="text-right">
+                                <div class="font-mono text-xs text-slate-200">$<%= c.price.toFixed(c.pricePlace) %></div>
+                                <div class="text-[10px] font-mono <%= c.isUp ? 'text-emerald-400' : 'text-rose-400' %>">
+                                    <%= c.isUp ? '+' : '' %><%= c.changePct.toFixed(2) %>% <span class="text-slate-600">(<%= tf === '1h' ? '4d' : '8h' %>)</span>
+                                </div>
+                            </div>
+                        </div>
+                        <% if (c.hasData) { %>
+                            <div id="chart-<%= i %>" class="w-full" style="height: 240px;"></div>
+                        <% } else { %>
+                            <div class="h-[240px] flex items-center justify-center text-xs text-slate-700">no data yet</div>
+                        <% } %>
+                    </div>
+                <% }) %>
+            </div>
+        <% } %>
+    </section>
+
+    <!-- TradingView lightweight-charts (CDN, ~50KB) -->
+    <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+    <script>
+        (function() {
+            const data = <%- JSON.stringify(charts.map(c => ({ candles: c.candles, levels: c.levels, plan: c.plan, hasData: c.hasData, pricePlace: c.pricePlace }))) %>;
+            if (typeof LightweightCharts === 'undefined') return;
+
+            data.forEach((d, i) => {
+                if (!d.hasData) return;
+                const el = document.getElementById('chart-' + i);
+                if (!el) return;
+
+                const chart = LightweightCharts.createChart(el, {
+                    width: el.clientWidth,
+                    height: 240,
+                    layout: { background: { color: '#020617' }, textColor: '#94a3b8', fontSize: 11 },
+                    grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
+                    rightPriceScale: { borderColor: '#334155', scaleMargins: { top: 0.15, bottom: 0.15 } },
+                    timeScale: {
+                        borderColor: '#334155',
+                        timeVisible: true,
+                        secondsVisible: false,
+                        // Force Asia/Jakarta (WIB) display regardless of viewer's OS timezone.
+                        tickMarkFormatter: (time, tickMarkType) => {
+                            if (typeof time !== 'number') return '';
+                            const d = new Date(time * 1000);
+                            const tz = 'Asia/Jakarta';
+                            // tickMarkType: 0=Year, 1=Month, 2=DayOfMonth, 3=Time, 4=TimeWithSeconds
+                            if (tickMarkType >= 3) {
+                                return d.toLocaleTimeString('id-ID', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+                            }
+                            return d.toLocaleDateString('id-ID', { timeZone: tz, day: '2-digit', month: 'short' });
+                        }
+                    },
+                    localization: {
+                        // Tooltip / crosshair time format also in Jakarta
+                        timeFormatter: (time) => {
+                            if (typeof time !== 'number') return '';
+                            const d = new Date(time * 1000);
+                            return d.toLocaleString('id-ID', {
+                                timeZone: 'Asia/Jakarta',
+                                day: '2-digit', month: 'short',
+                                hour: '2-digit', minute: '2-digit', hour12: false
+                            });
+                        }
+                    },
+                    crosshair: { mode: 0 },
+                    handleScroll: false,
+                    handleScale: false
+                });
+
+                const precision = typeof d.pricePlace === 'number' ? d.pricePlace : 4;
+                const series = chart.addCandlestickSeries({
+                    upColor: '#10b981', downColor: '#ef4444',
+                    borderUpColor: '#10b981', borderDownColor: '#ef4444',
+                    wickUpColor: '#10b981', wickDownColor: '#ef4444',
+                    priceFormat: {
+                        type: 'price',
+                        precision: precision,
+                        minMove: 1 / Math.pow(10, precision)
+                    }
+                });
+                series.setData(d.candles);
+
+                // Render 3 lines only: Entry (slate), SL (yellow), TP (blue).
+                // Labels removed — only price badges remain on the right axis.
+                // - Active position → solid lines from actual trade
+                // - No position + valid plan → dashed lines previewing where bot WOULD enter
+                const COLOR_ENTRY = '#cbd5e1';   // slate-300
+                const COLOR_SL = '#facc15';      // yellow-400
+                const COLOR_TP = '#3b82f6';      // blue-500
+
+                if (d.levels) {
+                    // ACTIVE — solid + thick
+                    series.createPriceLine({
+                        price: d.levels.entry, color: COLOR_ENTRY, lineWidth: 2,
+                        lineStyle: 0, axisLabelVisible: true, title: '',
+                        axisLabelColor: COLOR_ENTRY, axisLabelTextColor: '#020617'
+                    });
+                    series.createPriceLine({
+                        price: d.levels.sl, color: COLOR_SL, lineWidth: 2,
+                        lineStyle: 0, axisLabelVisible: true, title: '',
+                        axisLabelColor: COLOR_SL, axisLabelTextColor: '#020617'
+                    });
+                    const tpPrice = (d.levels.tpHit && d.levels.tpHit[0]) ? d.levels.tp2 : d.levels.tp1;
+                    if (tpPrice) series.createPriceLine({
+                        price: tpPrice, color: COLOR_TP, lineWidth: 2,
+                        lineStyle: 0, axisLabelVisible: true, title: '',
+                        axisLabelColor: COLOR_TP, axisLabelTextColor: '#ffffff'
+                    });
+                } else if (d.plan && d.plan.status !== 'INVALIDATED') {
+                    // PLAN PREVIEW — dashed, thinner. Hide if invalidated (price broke FVG).
+                    series.createPriceLine({
+                        price: d.plan.entry, color: COLOR_ENTRY, lineWidth: 1,
+                        lineStyle: 2, axisLabelVisible: true, title: '',
+                        axisLabelColor: COLOR_ENTRY, axisLabelTextColor: '#020617'
+                    });
+                    series.createPriceLine({
+                        price: d.plan.sl, color: COLOR_SL, lineWidth: 1,
+                        lineStyle: 2, axisLabelVisible: true, title: '',
+                        axisLabelColor: COLOR_SL, axisLabelTextColor: '#020617'
+                    });
+                    series.createPriceLine({
+                        price: d.plan.tp, color: COLOR_TP, lineWidth: 1,
+                        lineStyle: 2, axisLabelVisible: true, title: '',
+                        axisLabelColor: COLOR_TP, axisLabelTextColor: '#ffffff'
+                    });
+                }
+
+                chart.timeScale().fitContent();
+
+                // Responsive resize on window changes
+                window.addEventListener('resize', () => {
+                    chart.applyOptions({ width: el.clientWidth });
+                });
+            });
+        })();
+    </script>
+
+    <!-- Daily loss (per-coin) -->
+    <section class="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-6">
+        <div class="flex justify-between items-center mb-3">
+            <h2 class="text-sm uppercase text-slate-500 font-semibold">Daily realized R (per coin)</h2>
+            <span class="text-sm font-mono <%= daily.totalR >= 0 ? 'text-emerald-400' : 'text-rose-400' %>">
+                Total: <%= daily.totalR >= 0 ? '+' : '' %><%= daily.totalR.toFixed(2) %>R
+            </span>
+        </div>
+        <% if (daily.entries.length === 0) { %>
+            <p class="text-xs text-slate-600">No trades closed today.</p>
+        <% } else { %>
+            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                <% daily.entries.forEach(e => { %>
+                    <div class="flex justify-between bg-slate-950 px-3 py-2 rounded border border-slate-800">
+                        <span class="font-mono text-xs text-slate-300"><%= e.symbol.replace('USDT','') %></span>
+                        <span class="font-mono text-xs <%= e.r >= 0 ? 'text-emerald-400' : (e.r <= -3 ? 'text-rose-500 font-bold' : 'text-rose-400') %>">
+                            <%= e.r >= 0 ? '+' : '' %><%= e.r.toFixed(2) %>R<%= e.r <= -3 ? ' 🚫' : '' %>
+                        </span>
+                    </div>
+                <% }) %>
+            </div>
+        <% } %>
+    </section>
+
+    <!-- Open positions table -->
+    <section class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-800">
+            <h2 class="text-sm uppercase text-slate-500 font-semibold">Open positions</h2>
+        </div>
+        <% if (positions.length === 0) { %>
+            <p class="px-4 py-6 text-slate-600 text-sm">No active positions. Bot is scanning…</p>
+        <% } else { %>
+        <table class="w-full text-sm">
+            <thead class="bg-slate-950 text-slate-500">
+                <tr class="text-left">
+                    <th class="p-3">Ticker</th>
+                    <th class="p-3">Side</th>
+                    <th class="p-3">Entry</th>
+                    <th class="p-3">Current</th>
+                    <th class="p-3">SL</th>
+                    <th class="p-3">TP1</th>
+                    <th class="p-3">TP2</th>
+                    <th class="p-3">Status</th>
+                    <th class="p-3 text-right">PnL ($)</th>
+                    <th class="p-3 text-right">PnL (%)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <% positions.forEach(p => { %>
+                    <tr class="border-t border-slate-800 hover:bg-slate-800/30">
+                        <td class="p-3 font-bold"><%= p.symbol %></td>
+                        <td class="p-3 font-semibold <%= p.side === 'LONG' ? 'text-emerald-400' : 'text-rose-400' %>"><%= p.side %></td>
+                        <td class="p-3 font-mono">$<%= p.entryPrice.toFixed(4) %></td>
+                        <td class="p-3 font-mono text-white">$<%= p.currentPrice.toFixed(4) %></td>
+                        <td class="p-3 font-mono <%= p.breakevenMoved ? 'text-amber-400' : 'text-rose-400' %>">
+                            $<%= p.slPrice.toFixed(4) %><%= p.breakevenMoved ? ' (BE)' : '' %>
+                        </td>
+                        <td class="p-3 font-mono <%= p.tpHit && p.tpHit[0] ? 'text-emerald-500 line-through' : 'text-emerald-400' %>">
+                            <%= p.tpLevels && p.tpLevels[0] ? '$' + p.tpLevels[0].toFixed(4) : '—' %>
+                        </td>
+                        <td class="p-3 font-mono <%= p.tpHit && p.tpHit[1] ? 'text-emerald-500 line-through' : 'text-emerald-400' %>">
+                            <%= p.tpLevels && p.tpLevels[1] ? '$' + p.tpLevels[1].toFixed(4) : '—' %>
+                        </td>
+                        <td class="p-3">
+                            <% if (p.tpHit && p.tpHit[0] && p.tpHit[1]) { %>
+                                <span class="px-2 py-1 rounded text-xs bg-emerald-900/60 text-emerald-300">TP2 nearly done</span>
+                            <% } else if (p.breakevenMoved) { %>
+                                <span class="px-2 py-1 rounded text-xs bg-amber-900/60 text-amber-300">TP1 ✓ SL→BE</span>
+                            <% } else { %>
+                                <span class="px-2 py-1 rounded text-xs bg-slate-800 text-slate-400">Active</span>
+                            <% } %>
+                        </td>
+                        <td class="p-3 font-mono text-right <%= p.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400' %>">
+                            <%= p.pnl >= 0 ? '+' : '' %><%= p.pnl.toFixed(2) %>
+                        </td>
+                        <td class="p-3 font-mono text-right <%= p.pnlPercent >= 0 ? 'text-emerald-400' : 'text-rose-400' %>">
+                            <%= p.pnlPercent >= 0 ? '+' : '' %><%= p.pnlPercent.toFixed(2) %>%
+                        </td>
+                    </tr>
+                <% }) %>
+            </tbody>
+        </table>
+        <% } %>
+    </section>
+
+    <footer class="mt-6 text-xs text-slate-600 text-center">
+        🚫 indicates daily loss limit reached · TP strikethrough = filled
+    </footer>
+</div>
+</body>
+</html>
