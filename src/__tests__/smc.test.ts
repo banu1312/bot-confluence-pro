@@ -325,9 +325,10 @@ describe('hasInducement', () => {
   });
 
   it('should return false when no inducement', () => {
+    // No swing HIGH between entry 106 and TP 115
     const swings: SwingPoint[] = [
       { index: 0, price: 100, type: 'LOW' },
-      { index: 1, price: 110, type: 'HIGH' },
+      { index: 1, price: 105, type: 'HIGH' }, // 105 < entry 106, so not between
     ];
     expect(hasInducement(swings, 'LONG', 106, 115, 2, 0)).toBe(false);
   });
