@@ -307,6 +307,155 @@ async function runBacktest(symbol: string, days: number, verbose: boolean = true
     return trades;
 }
 
+// ─── Comprehensive backtest metrics ────────────────────────────────────────
+interface BacktestMetrics {
+    totalTrades: number;
+    winRate: number;
+    avgWin: number;
+    avgLoss: number;
+    profitFactor: number;
+    expectancy: number;
+    netProfit: number;
+    maxDrawdown: number;
+    maxDrawdownPct: number;
+    maxConsecutiveWins: number;
+    maxConsecutiveLosses: number;
+    sharpeRatio: number;
+    sortinoRatio: number;
+    calmarRatio: number;
+    recoveryFactor: number;
+    ulcerIndex: number;
+    timeInMarket: number; // percentage of bars where position was open
+    avgBarsHeld: number;
+    tp1FillRate: number;
+}
+
+function calculateMetrics(trades: Trade[], totalBars: number): BacktestMetrics {
+    const n = trades.length;
+    if (n === 0) {
+        return {
+            totalTrades: 0, winRate: 0, avgWin: 0, avgLoss: 0,
+            profitFactor: 0, expectancy: 0, netProfit: 0,
+            maxDrawdown: 0, maxDrawdownPct: 0,
+            maxConsecutiveWins: 0, maxConsecutiveLosses: 0,
+            sharpeRatio: 0, sortinoRatio: 0, calmarRatio: 0,
+            recoveryFactor: 0, ulcerIndex: 0,
+            timeInMarket: 0, avgBarsHeld: 0, tp1FillRate: 0
+        };
+    }
+
+    const winners = trades.filter(t => t.finalR > 0);
+    const losers = trades.filter(t => t.finalR < 0);
+    const winRate = winners.length / n;
+
+    const avgWin = winners.length > 0
+        ? winners.reduce((s, t) => s + t.finalR, 0) / winners.length
+        : 0;
+    const avgLoss = losers.length > 0
+        ? losers.reduce((s, t) => s + t.finalR, 0) / losers.length
+        : 0;
+
+    const grossProfit = winners.reduce((s, t) => s + t.finalR, 0);
+    const grossLoss = Math.abs(losers.reduce((s, t) => s + t.finalR, 0));
+    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
+
+    const netProfit = trades.reduce((s, t) => s + t.finalR, 0);
+    const expectancy = netProfit / n;
+
+    // Max drawdown (in R units)
+    let equity = 0, peak = 0, maxDD = 0;
+    for (const t of trades) {
+        equity += t.finalR;
+        if (equity > peak) peak = equity;
+        const dd = peak - equity;
+        if (dd > maxDD) maxDD = dd;
+    }
+    const maxDrawdown = maxDD;
+    const maxDrawdownPct = peak > 0 ? maxDD / peak : 0;
+
+    // Consecutive wins/losses
+    let curWin = 0, curLoss = 0, maxWin = 0, maxLoss = 0;
+    for (const t of trades) {
+        if (t.finalR > 0) { curWin++; curLoss = 0; if (curWin > maxWin) maxWin = curWin; }
+        else if (t.finalR < 0) { curLoss++; curWin = 0; if (curLoss > maxLoss) maxLoss = curLoss; }
+        else { curWin = 0; curLoss = 0; }
+    }
+
+    // Sharpe ratio (annualized, using R as return)
+    const returns = trades.map(t => t.finalR);
+    const avgReturn = returns.reduce((s, r) => s + r, 0) / returns.length;
+    const variance = returns.reduce((s, r) => s + (r - avgReturn) ** 2, 0) / returns.length;
+    const stdDev = Math.sqrt(variance);
+    const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(365) : 0; // annualized (365 days)
+
+    // Sortino ratio (downside deviation only)
+    const downsideReturns = returns.filter(r => r < 0);
+    const downsideVariance = downsideReturns.length > 0
+        ? downsideReturns.reduce((s, r) => s + (r - avgReturn) ** 2, 0) / downsideReturns.length
+        : 0;
+    const downsideDev = Math.sqrt(downsideVariance);
+    const sortinoRatio = downsideDev > 0 ? (avgReturn / downsideDev) * Math.sqrt(365) : 0;
+
+    // Calmar ratio (annualized return / max drawdown)
+    const annualizedReturn = avgReturn * 365; // assuming 1 trade per day average
+    const calmarRatio = maxDrawdown > 0 ? annualizedReturn / maxDrawdown : 0;
+
+    // Recovery factor
+    const recoveryFactor = maxDrawdown > 0 ? netProfit / maxDrawdown : 0;
+
+    // Ulcer Index (measure of downside volatility)
+    const ulcerIndex = calculateUlcerIndex(trades);
+
+    // Time in market (percentage of bars where position was open)
+    const totalBarsHeld = trades.reduce((s, t) => s + t.barsHeld, 0);
+    const timeInMarket = totalBars > 0 ? totalBarsHeld / totalBars : 0;
+
+    // Average bars held
+    const avgBarsHeld = trades.reduce((s, t) => s + t.barsHeld, 0) / n;
+
+    // TP1 fill rate
+    const tp1FillRate = trades.filter(t => t.tpHit[0]).length / n;
+
+    return {
+        totalTrades: n,
+        winRate,
+        avgWin,
+        avgLoss,
+        profitFactor,
+        expectancy,
+        netProfit,
+        maxDrawdown,
+        maxDrawdownPct,
+        maxConsecutiveWins: maxWin,
+        maxConsecutiveLosses: maxLoss,
+        sharpeRatio,
+        sortinoRatio,
+        calmarRatio,
+        recoveryFactor,
+        ulcerIndex,
+        timeInMarket,
+        avgBarsHeld,
+        tp1FillRate
+    };
+}
+
+// ─── Ulcer Index calculation ───────────────────────────────────────────────
+// Measures downside volatility based on percentage drawdowns from peak.
+function calculateUlcerIndex(trades: Trade[]): number {
+    if (trades.length === 0) return 0;
+
+    let equity = 0, peak = 0;
+    const drawdowns: number[] = [];
+    for (const t of trades) {
+        equity += t.finalR;
+        if (equity > peak) peak = equity;
+        const dd = peak > 0 ? (peak - equity) / peak : 0;
+        drawdowns.push(dd);
+    }
+    const sumSquares = drawdowns.reduce((s, dd) => s + dd * dd, 0);
+    return Math.sqrt(sumSquares / drawdowns.length);
+}
+
 function printReport(symbol: string, days: number, trades: Trade[], detailed: boolean = true): void {
     const counts: Record<EndReason, number> = {
         'TP_FULL': 0, 'TP1_BE_HOLD': 0, 'TP1_BE_STOP': 0, 'SL': 0, 'OPEN': 0
@@ -357,10 +506,25 @@ function printReport(symbol: string, days: number, trades: Trade[], detailed: bo
     console.log(`  Profitable trades:    ${winners} (${(winners / trades.length * 100).toFixed(1)}%)`);
     console.log(`  Break-even (0R):      ${flat}`);
     console.log(`  Losers (<0R):         ${losers}`);
+    const totalBars = days * 24 * 12; // 5m bars in the period
+    const metrics = calculateMetrics(trades, totalBars);
+
     console.log(`\n  Avg R per trade:      ${avgR >= 0 ? '+' : ''}${avgR.toFixed(2)}R`);
     console.log(`  Net R-multiple:       ${equity >= 0 ? '+' : ''}${equity.toFixed(2)}R`);
     console.log(`  Max drawdown:         ${maxDD.toFixed(2)}R`);
+    console.log(`  Max DD %:             ${(metrics.maxDrawdownPct * 100).toFixed(1)}%`);
     console.log(`  Max loss streak:      ${maxLoss}`);
+    console.log(`  Max win streak:       ${metrics.maxConsecutiveWins}`);
+    console.log(`  Avg win:              ${metrics.avgWin >= 0 ? '+' : ''}${metrics.avgWin.toFixed(2)}R`);
+    console.log(`  Avg loss:             ${metrics.avgLoss.toFixed(2)}R`);
+    console.log(`  Profit factor:        ${metrics.profitFactor === Infinity ? '∞' : metrics.profitFactor.toFixed(2)}`);
+    console.log(`  Expectancy:           ${metrics.expectancy >= 0 ? '+' : ''}${metrics.expectancy.toFixed(2)}R`);
+    console.log(`  Sharpe ratio (ann.):  ${metrics.sharpeRatio.toFixed(2)}`);
+    console.log(`  Sortino ratio (ann.): ${metrics.sortinoRatio.toFixed(2)}`);
+    console.log(`  Calmar ratio:         ${metrics.calmarRatio.toFixed(2)}`);
+    console.log(`  Recovery factor:      ${metrics.recoveryFactor.toFixed(2)}`);
+    console.log(`  Ulcer index:          ${metrics.ulcerIndex.toFixed(4)}`);
+    console.log(`  Time in market:       ${(metrics.timeInMarket * 100).toFixed(1)}%`);
     console.log(`  Avg bars held:        ${avgBarsHeld.toFixed(1)} (${(avgBarsHeld * 5 / 60).toFixed(1)}h)`);
     console.log(`\n💰 If risking 10 USDT per trade: net = ${(equity * 10).toFixed(2)} USDT`);
 
@@ -392,17 +556,9 @@ function printCombinedReport(allTrades: Trade[], days: number): void {
     const tp1Count = allTrades.filter(t => t.tpHit[0]).length;
     const profitableCoins = Object.values(byCoin).filter(ts => ts.reduce((s,t) => s+t.finalR, 0) > 0).length;
 
-    // Combined equity curve sorted by entry time
-    const sorted = [...allTrades].sort((a, b) => a.entryTs - b.entryTs);
-    let equity = 0, peak = 0, maxDD = 0, lossStreak = 0, maxLossStreak = 0, winStreak = 0, maxWinStreak = 0;
-    for (const t of sorted) {
-        equity += t.finalR;
-        if (t.finalR > 0) { winStreak++; maxWinStreak = Math.max(maxWinStreak, winStreak); lossStreak = 0; }
-        else if (t.finalR < 0) { lossStreak++; maxLossStreak = Math.max(maxLossStreak, lossStreak); winStreak = 0; }
-        if (equity > peak) peak = equity;
-        const dd = peak - equity;
-        if (dd > maxDD) maxDD = dd;
-    }
+    // Calculate comprehensive metrics
+    const totalBars = days * 24 * 12; // 5m bars in the period
+    const metrics = calculateMetrics(allTrades, totalBars);
 
     // Per-coin table sorted by Net R descending
     const coinStats = Object.entries(byCoin)
@@ -423,11 +579,23 @@ function printCombinedReport(allTrades: Trade[], days: number): void {
     console.log(`  Profitable coins:      ${profitableCoins}/${Object.keys(byCoin).length}`);
     console.log(`  Net R (portfolio):     ${totalR >= 0 ? '+' : ''}${totalR.toFixed(2)}R`);
     console.log(`  Avg R per trade:       ${avgR >= 0 ? '+' : ''}${avgR.toFixed(2)}R`);
-    console.log(`  Max portfolio DD:      ${maxDD.toFixed(2)}R`);
-    console.log(`  Max loss streak:       ${maxLossStreak}`);
-    console.log(`  Max win streak:        ${maxWinStreak}`);
+    console.log(`  Max portfolio DD:      ${metrics.maxDrawdown.toFixed(2)}R`);
+    console.log(`  Max DD %:              ${(metrics.maxDrawdownPct * 100).toFixed(1)}%`);
+    console.log(`  Max loss streak:       ${metrics.maxConsecutiveLosses}`);
+    console.log(`  Max win streak:        ${metrics.maxConsecutiveWins}`);
+    console.log(`  Avg win:               ${metrics.avgWin >= 0 ? '+' : ''}${metrics.avgWin.toFixed(2)}R`);
+    console.log(`  Avg loss:              ${metrics.avgLoss.toFixed(2)}R`);
+    console.log(`  Profit factor:         ${metrics.profitFactor === Infinity ? '∞' : metrics.profitFactor.toFixed(2)}`);
+    console.log(`  Expectancy:            ${metrics.expectancy >= 0 ? '+' : ''}${metrics.expectancy.toFixed(2)}R`);
+    console.log(`  Sharpe ratio (ann.):   ${metrics.sharpeRatio.toFixed(2)}`);
+    console.log(`  Sortino ratio (ann.):  ${metrics.sortinoRatio.toFixed(2)}`);
+    console.log(`  Calmar ratio:          ${metrics.calmarRatio.toFixed(2)}`);
+    console.log(`  Recovery factor:       ${metrics.recoveryFactor.toFixed(2)}`);
+    console.log(`  Ulcer index:           ${metrics.ulcerIndex.toFixed(4)}`);
+    console.log(`  Time in market:        ${(metrics.timeInMarket * 100).toFixed(1)}%`);
+    console.log(`  Avg bars held:         ${metrics.avgBarsHeld.toFixed(1)} (${(metrics.avgBarsHeld * 5 / 60).toFixed(1)}h)`);
     console.log(`\n  💰 If risking 10 USDT/trade: net = ${(totalR * 10).toFixed(2)} USDT`);
-    console.log(`     (portfolio DD never exceeded ${(maxDD * 10).toFixed(2)} USDT)`);
+    console.log(`     (portfolio DD never exceeded ${(metrics.maxDrawdown * 10).toFixed(2)} USDT)`);
 
     console.log(`\n  Per-coin ranking (all ${coinStats.length} coins):`);
     console.log(`  ${'Symbol'.padEnd(12)} ${'Sig'.padEnd(5)} ${'W/L'.padEnd(8)} ${'TP1%'.padEnd(7)} ${'Net R'.padEnd(10)}`);
