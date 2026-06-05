@@ -11,10 +11,24 @@ let reconnectTimer: NodeJS.Timeout | null = null;
 let reconnectAttempts = 0;
 let currentCoins: string[] = [];
 
+// Health check state
+let lastPongTime: number = Date.now();
+let healthCheckInterval: NodeJS.Timeout | null = null;
+export const wsHealth = {
+    connected: false,
+    lastPongAge: 0,        // seconds since last pong
+    lastMessageAge: 0,     // seconds since last data message
+    lastMessageTime: 0,    // timestamp of last data message
+    reconnectAttempts: 0,
+    status: 'DISCONNECTED' as 'CONNECTED' | 'DISCONNECTED' | 'RECONNECTING' | 'ERROR'
+};
+
 const WS_URL = 'wss://ws.bitget.com/v2/ws/public';
 const PING_MS = 25_000;
 const MAX_BACKOFF_MS = 30_000;
 const MAX_CONSECUTIVE_FAILURES = 8;
+const HEALTH_CHECK_MS = 30_000;  // check every 30 seconds
+const PONG_TIMEOUT_MS = 60_000;  // consider dead after 60s without pong
 
 // --- Caching Engine untuk Dashboard ---
 type PlanStatus = 'READY' | 'WAITING' | 'INVALIDATED';
@@ -111,16 +125,20 @@ function buildSubscribeArgs(coins: string[]) {
 function clearTimers() {
     if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (healthCheckInterval) { clearInterval(healthCheckInterval); healthCheckInterval = null; }
 }
 
 function scheduleReconnect() {
     if (reconnectTimer) return;
     if (reconnectAttempts >= MAX_CONSECUTIVE_FAILURES) {
         console.error(`🛑 [WS] Halted after ${MAX_CONSECUTIVE_FAILURES} consecutive failures.`);
+        wsHealth.status = 'ERROR';
         return;
     }
     const delay = Math.min(MAX_BACKOFF_MS, 1000 * Math.pow(2, reconnectAttempts));
     reconnectAttempts++;
+    wsHealth.reconnectAttempts = reconnectAttempts;
+    wsHealth.status = 'RECONNECTING';
     console.log(`🔄 [WS] Reconnect in ${Math.round(delay / 1000)}s (attempt ${reconnectAttempts}/${MAX_CONSECUTIVE_FAILURES})`);
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
@@ -134,17 +152,50 @@ function connect() {
     ws.on('open', () => {
         console.log(`✅ [WS] Connected (attempts cleared from ${reconnectAttempts})`);
         reconnectAttempts = 0;
+        wsHealth.reconnectAttempts = 0;
+        wsHealth.connected = true;
+        wsHealth.status = 'CONNECTED';
         ws!.send(JSON.stringify({ op: 'subscribe', args: buildSubscribeArgs(currentCoins) }));
 
         if (pingInterval) clearInterval(pingInterval);
         pingInterval = setInterval(() => {
             if (ws?.readyState === WebSocket.OPEN) ws.send('ping');
         }, PING_MS);
+
+        // Start health check interval
+        if (healthCheckInterval) clearInterval(healthCheckInterval);
+        healthCheckInterval = setInterval(() => {
+            const now = Date.now();
+            const pongAge = (now - lastPongTime) / 1000;
+            const msgAge = wsHealth.lastMessageTime > 0 ? (now - wsHealth.lastMessageTime) / 1000 : 0;
+            wsHealth.lastPongAge = pongAge;
+            wsHealth.lastMessageAge = msgAge;
+
+            if (pongAge > PONG_TIMEOUT_MS / 1000) {
+                console.warn(`⚠️  [WS HEALTH] No pong for ${pongAge.toFixed(0)}s — forcing reconnect`);
+                wsHealth.status = 'ERROR';
+                ws?.close();
+                return;
+            }
+
+            if (msgAge > 120) { // 2 minutes without data
+                console.warn(`⚠️  [WS HEALTH] No data for ${msgAge.toFixed(0)}s — possible stale connection`);
+                wsHealth.status = 'ERROR';
+                ws?.close();
+                return;
+            }
+
+            wsHealth.status = 'CONNECTED';
+        }, HEALTH_CHECK_MS);
     });
 
     ws.on('message', async (raw: WebSocket.RawData) => {
         const text = raw.toString();
-        if (text === 'pong') return;
+        if (text === 'pong') {
+            lastPongTime = Date.now();
+            return;
+        }
+        wsHealth.lastMessageTime = Date.now();
 
         let parsed: any;
         try { parsed = JSON.parse(text); } catch { return; }
@@ -225,6 +276,8 @@ function connect() {
 
     ws.on('close', (code: number, reason: Buffer) => {
         console.warn(`⚠️  [WS] Closed (code=${code}) ${reason.toString() || ''}`);
+        wsHealth.connected = false;
+        wsHealth.status = 'DISCONNECTED';
         clearTimers();
         scheduleReconnect();
     });

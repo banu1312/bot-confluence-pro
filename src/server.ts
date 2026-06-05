@@ -1,7 +1,7 @@
 import express from 'express';
 import { StateManager } from './state';
 import path from 'path';
-import { marketData } from './websocket';
+import { marketData, wsHealth } from './websocket';
 import { ExecutionEngine } from './execution';
 
 const MARGIN = parseFloat(process.env.MARGIN_PER_TRADE || '10');
@@ -126,7 +126,14 @@ app.get('/', (req, res) => {
         config: {
             marginPerTrade: MARGIN
         },
-        tf
+        tf,
+        wsHealth: {
+            connected: wsHealth.connected,
+            status: wsHealth.status,
+            lastPongAge: wsHealth.lastPongAge,
+            lastMessageAge: wsHealth.lastMessageAge,
+            reconnectAttempts: wsHealth.reconnectAttempts
+        }
     });
 });
 
