@@ -33,14 +33,32 @@ export type Bias = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 // `lookback` candles on both sides. Symmetric definition for swing lows.
 export function findSwings(highs: number[], lows: number[], lookback: number = 2): SwingPoint[] {
     const out: SwingPoint[] = [];
-    for (let i = lookback; i < highs.length - lookback; i++) {
-        let isHigh = true, isLow = true;
-        for (let k = 1; k <= lookback; k++) {
-            if (highs[i] <= highs[i - k] || highs[i] <= highs[i + k]) isHigh = false;
-            if (lows[i] >= lows[i - k] || lows[i] >= lows[i + k]) isLow = false;
+    for (let i = 0; i < highs.length; i++) {
+        // Need at least lookback candles on both sides to be a valid swing
+        if (i < lookback || i >= highs.length - lookback) {
+            // Edge candles can still be swings if they are the highest/lowest in the window
+            let isHigh = true, isLow = true;
+            for (let k = 1; k <= lookback; k++) {
+                if (i - k >= 0) {
+                    if (highs[i] <= highs[i - k]) isHigh = false;
+                    if (lows[i] >= lows[i - k]) isLow = false;
+                }
+                if (i + k < highs.length) {
+                    if (highs[i] <= highs[i + k]) isHigh = false;
+                    if (lows[i] >= lows[i + k]) isLow = false;
+                }
+            }
+            if (isHigh) out.push({ index: i, price: highs[i], type: 'HIGH' });
+            if (isLow) out.push({ index: i, price: lows[i], type: 'LOW' });
+        } else {
+            let isHigh = true, isLow = true;
+            for (let k = 1; k <= lookback; k++) {
+                if (highs[i] <= highs[i - k] || highs[i] <= highs[i + k]) isHigh = false;
+                if (lows[i] >= lows[i - k] || lows[i] >= lows[i + k]) isLow = false;
+            }
+            if (isHigh) out.push({ index: i, price: highs[i], type: 'HIGH' });
+            if (isLow) out.push({ index: i, price: lows[i], type: 'LOW' });
         }
-        if (isHigh) out.push({ index: i, price: highs[i], type: 'HIGH' });
-        if (isLow) out.push({ index: i, price: lows[i], type: 'LOW' });
     }
     return out;
 }
