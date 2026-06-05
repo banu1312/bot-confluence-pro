@@ -589,7 +589,7 @@ function printCombinedReport(allTrades: Trade[], days: number): void {
     console.log(`  Max win streak:        ${metrics.maxConsecutiveWins}`);
     console.log(`  Avg win:               ${metrics.avgWin >= 0 ? '+' : ''}${metrics.avgWin.toFixed(2)}R`);
     console.log(`  Avg loss:              ${metrics.avgLoss.toFixed(2)}R`);
-    console.log(`  RR ratio (avg win / avg loss): ${metrics.rrRatio === Infinity ? '∞' : metrics.rrRatio.toFixed(2)}`);
+    console.log(`  RR ratio (avg win / avg loss): ${metrics.rrRatio === undefined ? '0.00' : (metrics.rrRatio === Infinity ? '∞' : metrics.rrRatio.toFixed(2))}`);
     console.log(`  Profit factor:         ${metrics.profitFactor === Infinity ? '∞' : metrics.profitFactor.toFixed(2)}`);
     console.log(`  Expectancy:            ${metrics.expectancy >= 0 ? '+' : ''}${metrics.expectancy.toFixed(2)}R`);
     console.log(`  Sharpe ratio (ann.):   ${metrics.sharpeRatio.toFixed(2)}`);
