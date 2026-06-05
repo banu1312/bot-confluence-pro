@@ -284,9 +284,9 @@ export class ExecutionEngine {
 
             // Calculate ATR for the relevant LTF (5m or 15m)
             const atr = calculateATR(
-                signal.ltfTimeframe === '5m' ? signal.data?.highs5m ?? [] : signal.data?.highs15m ?? [],
-                signal.ltfTimeframe === '5m' ? signal.data?.lows5m ?? [] : signal.data?.lows15m ?? [],
-                signal.ltfTimeframe === '5m' ? signal.data?.closes5m ?? [] : signal.data?.closes15m ?? [],
+                signal.ltfTimeframe === '5m' ? (signal.data?.highs5m ?? []) : (signal.data?.highs15m ?? []),
+                signal.ltfTimeframe === '5m' ? (signal.data?.lows5m ?? []) : (signal.data?.lows15m ?? []),
+                signal.ltfTimeframe === '5m' ? (signal.data?.closes5m ?? []) : (signal.data?.closes15m ?? []),
                 ATR_PERIOD
             );
 

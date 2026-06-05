@@ -43,6 +43,7 @@ export interface SMCSignal {
     tpPrice: number;               // farthest TP (used for RR validation + backward compat)
     confluence: string[];
     ltfTimeframe: '5m' | '15m';   // which LTF triggered the signal
+    data?: MarketData;             // market data snapshot for ATR calculation in execution
 }
 
 export class ScoringEngine {
@@ -217,7 +218,8 @@ export class ScoringEngine {
             tpLevels,
             tpPrice: farTP,
             confluence,
-            ltfTimeframe
+            ltfTimeframe,
+            data
         };
     }
 }
