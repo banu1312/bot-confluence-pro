@@ -22,6 +22,10 @@ const ATR_MULTIPLIER_SL = parseFloat(process.env.ATR_MULTIPLIER_SL || '2');
 // Trailing stop parameters
 const TRAIL_PCT = parseFloat(process.env.TRAIL_PCT || '0.005'); // 0.5% default
 
+// Retry parameters
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 1000; // 1 second between retries
+
 const BASE_URL = 'https://api.bitget.com';
 
 interface ContractSpec {
@@ -63,6 +67,32 @@ export class ExecutionEngine {
             console.error(`❌ API Error (${endpoint}):`, error.response?.data || error.message);
             return null;
         }
+    }
+
+    // ─── Retry wrapper for sendRequest ──────────────────────────────────────
+    // Retries up to MAX_RETRIES times with RETRY_DELAY_MS delay between attempts.
+    // Only retries on network errors (no response) or 5xx server errors.
+    // Does NOT retry on 4xx client errors (invalid params, insufficient balance, etc.).
+    private static async sendRequestWithRetry(
+        method: 'POST' | 'GET',
+        endpoint: string,
+        payload: any = {},
+        label: string = ''
+    ): Promise<any> {
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            const result = await this.sendRequest(method, endpoint, payload);
+            if (result !== null) return result;
+
+            // Check if we should retry (network error or 5xx)
+            // sendRequest already logs the error, so we just check if result is null
+            if (attempt < MAX_RETRIES) {
+                console.warn(`🔄 [RETRY] ${label || endpoint} attempt ${attempt}/${MAX_RETRIES} failed — retrying in ${RETRY_DELAY_MS}ms`);
+                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+            } else {
+                console.error(`❌ [RETRY] ${label || endpoint} failed after ${MAX_RETRIES} attempts`);
+            }
+        }
+        return null;
     }
 
     public static getPricePlace(symbol: string): number {
@@ -175,13 +205,13 @@ export class ExecutionEngine {
 
     private static async ensureSymbolConfig(symbol: string): Promise<boolean> {
         if (this.configuredSymbols.has(symbol)) return true;
-        await this.sendRequest('POST', '/api/v2/mix/account/set-margin-mode', {
+        await this.sendRequestWithRetry('POST', '/api/v2/mix/account/set-margin-mode', {
             symbol, productType: 'USDT-FUTURES', marginCoin: 'USDT', marginMode: 'isolated'
-        });
-        const levRes = await this.sendRequest('POST', '/api/v2/mix/account/set-leverage', {
+        }, `setMarginMode(${symbol})`);
+        const levRes = await this.sendRequestWithRetry('POST', '/api/v2/mix/account/set-leverage', {
             symbol, productType: 'USDT-FUTURES', marginCoin: 'USDT',
             leverage: LEVERAGE.toString()
-        });
+        }, `setLeverage(${symbol})`);
         if (levRes && levRes.code === '00000') {
             this.configuredSymbols.add(symbol);
             console.log(`⚙️  [CONFIG] ${symbol}: isolated, ${LEVERAGE}x`);
@@ -192,7 +222,7 @@ export class ExecutionEngine {
     }
 
     public static async fetchAccountInfo(): Promise<{ equity: number; available: number; locked: number; unrealizedPL: number } | null> {
-        const res = await this.sendRequest('GET', '/api/v2/mix/account/accounts?productType=USDT-FUTURES');
+        const res = await this.sendRequestWithRetry('GET', '/api/v2/mix/account/accounts?productType=USDT-FUTURES', {}, 'fetchAccountInfo');
         if (!res || res.code !== '00000') return null;
         const accounts: any[] = res.data ?? [];
         const usdt = accounts.find(a => a.marginCoin === 'USDT');
@@ -206,7 +236,7 @@ export class ExecutionEngine {
     }
 
     public static async fetchOpenPositions(): Promise<Map<string, number> | null> {
-        const res = await this.sendRequest('GET', '/api/v2/mix/position/all-position?productType=USDT-FUTURES&marginCoin=USDT');
+        const res = await this.sendRequestWithRetry('GET', '/api/v2/mix/position/all-position?productType=USDT-FUTURES&marginCoin=USDT', {}, 'fetchOpenPositions');
         if (!res || res.code !== '00000') return null;
         const positions = res.data ?? [];
         const out = new Map<string, number>();
@@ -218,7 +248,7 @@ export class ExecutionEngine {
     }
 
     private static async fetchFillPrice(symbol: string, orderId: string): Promise<number | null> {
-        const res = await this.sendRequest('GET', `/api/v2/mix/order/detail?symbol=${symbol}&productType=USDT-FUTURES&orderId=${orderId}`);
+        const res = await this.sendRequestWithRetry('GET', `/api/v2/mix/order/detail?symbol=${symbol}&productType=USDT-FUTURES&orderId=${orderId}`, {}, `fetchFillPrice(${symbol})`);
         if (!res || res.code !== '00000') return null;
         const avg = parseFloat(res.data?.priceAvg ?? '0');
         return avg > 0 ? avg : null;
@@ -232,7 +262,7 @@ export class ExecutionEngine {
         sizeStr: string
     ): Promise<string | null> {
         const clientOid = `${planType}-${symbol}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-        const res = await this.sendRequest('POST', '/api/v2/mix/order/place-tpsl-order', {
+        const res = await this.sendRequestWithRetry('POST', '/api/v2/mix/order/place-tpsl-order', {
             marginCoin: 'USDT',
             productType: 'USDT-FUTURES',
             symbol,
@@ -242,19 +272,19 @@ export class ExecutionEngine {
             executePrice: '0',
             size: sizeStr,
             clientOid
-        });
+        }, `placePlanOrder(${symbol},${planType})`);
         if (res?.code === '00000') return res.data?.orderId ?? null;
         return null;
     }
 
     private static async cancelPlanOrder(symbol: string, planType: 'profit_plan' | 'loss_plan', orderId: string): Promise<boolean> {
-        const res = await this.sendRequest('POST', '/api/v2/mix/order/cancel-plan-order', {
+        const res = await this.sendRequestWithRetry('POST', '/api/v2/mix/order/cancel-plan-order', {
             marginCoin: 'USDT',
             productType: 'USDT-FUTURES',
             symbol,
             planType,
             orderId
-        });
+        }, `cancelPlanOrder(${symbol},${planType})`);
         return res?.code === '00000';
     }
 
@@ -401,17 +431,17 @@ export class ExecutionEngine {
                 return;
             }
 
-            // 1. Main market order
+            // 1. Main market order (with retry)
             const clientOid = `smc-${symbol}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-            const mainRes = await this.sendRequest('POST', '/api/v2/mix/order/place-order', {
+            const mainRes = await this.sendRequestWithRetry('POST', '/api/v2/mix/order/place-order', {
                 symbol, productType: 'USDT-FUTURES', marginCoin: 'USDT', marginMode: 'isolated',
                 side: side === 'LONG' ? 'buy' : 'sell',
                 orderType: 'market',
                 size: totalQtyStr,
                 clientOid
-            });
+            }, `placeOrder(${symbol})`);
             if (!mainRes || mainRes.code !== '00000') {
-                console.error(`❌ [EXEC] Main order failed for ${symbol}`);
+                console.error(`❌ [EXEC] Main order failed for ${symbol} after retries`);
                 return;
             }
 
