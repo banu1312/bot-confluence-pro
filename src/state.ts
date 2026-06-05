@@ -14,6 +14,7 @@ export interface ActivePosition {
     slPlanId: string | null;      // Bitget plan order id for current SL
     tpPlanIds: (string | null)[]; // Bitget plan order ids for each TP
     breakevenMoved: boolean;      // true after SL has been moved to entry price
+    trailActivated: boolean;      // true after trailing stop has been activated (post TP1)
 }
 
 export interface DailyLossTracker {
@@ -161,6 +162,7 @@ export class StateManager {
         if (!p) return;
         p.tpHit[0] = true;
         p.breakevenMoved = true;
+        p.trailActivated = true;
         p.slPrice = newSlPrice;
         p.slPlanId = newSlPlanId;
         p.qty = newQty;

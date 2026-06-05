@@ -17,6 +17,7 @@ async function initBot() {
     }
     console.log(`📊 [RISK] Risk per trade: ${process.env.RISK_PER_TRADE_PCT || '1'}% of equity`);
     console.log(`📊 [ATR] ATR period: ${process.env.ATR_PERIOD || '14'}, SL multiplier: ${process.env.ATR_MULTIPLIER_SL || '2'}`);
+    console.log(`📊 [TRAIL] Trailing stop: ${process.env.TRAIL_PCT || '0.005'}% after TP1`);
     console.log("=========================================\n");
 
     // 0. Load persisted state + contract specs (parallel)
@@ -73,7 +74,20 @@ async function initBot() {
 
             if (exchangeQty < pos.originalQty * 0.95 && !pos.breakevenMoved) {
                 console.log(`🎯 [TP1 HIT] ${pos.symbol}: qty ${pos.originalQty} → ${exchangeQty}`);
-                await ExecutionEngine.moveSLToBreakeven(pos, exchangeQty);
+                // Get current price from market data (use last close)
+                const currentPrice = pos.side === 'LONG'
+                    ? (pos.tpLevels[0] ?? pos.entryPrice * 1.01)
+                    : (pos.tpLevels[0] ?? pos.entryPrice * 0.99);
+                await ExecutionEngine.moveSLToTrailing(pos, exchangeQty, currentPrice);
+            }
+
+            // Update trailing stop for positions that already have trail activated
+            if (pos.trailActivated) {
+                // Get current price from market data (use last close)
+                const currentPrice = pos.side === 'LONG'
+                    ? (pos.tpLevels[0] ?? pos.entryPrice * 1.01)
+                    : (pos.tpLevels[0] ?? pos.entryPrice * 0.99);
+                await ExecutionEngine.updateTrailingStop(pos, exchangeQty, currentPrice);
             }
         }
 

@@ -19,6 +19,9 @@ const RISK_PER_TRADE_PCT = parseFloat(process.env.RISK_PER_TRADE_PCT || '1');
 const ATR_PERIOD = parseInt(process.env.ATR_PERIOD || '14', 10);
 const ATR_MULTIPLIER_SL = parseFloat(process.env.ATR_MULTIPLIER_SL || '2');
 
+// Trailing stop parameters
+const TRAIL_PCT = parseFloat(process.env.TRAIL_PCT || '0.005'); // 0.5% default
+
 const BASE_URL = 'https://api.bitget.com';
 
 interface ContractSpec {
@@ -96,6 +99,53 @@ export class ExecutionEngine {
         const stepped = Math.floor(qty / spec.sizeMultiplier) * spec.sizeMultiplier;
         if (stepped < spec.minTradeNum) return null;
         return stepped.toFixed(spec.volumePlace);
+    }
+
+    // ─── Update trailing stop for positions that already have trail activated ──
+    // Called periodically (every RECONCILE_MS) to move SL closer to current price.
+    public static async updateTrailingStop(position: ActivePosition, remainingQty: number, currentPrice: number): Promise<void> {
+        if (!position.trailActivated) return;
+        const spec = this.specs.get(position.symbol);
+        if (!spec) return;
+
+        // Calculate new trailing SL level
+        let newSlPrice: number;
+        if (position.side === 'LONG') {
+            newSlPrice = currentPrice * (1 - TRAIL_PCT);
+            // Never move SL below entry (breakeven)
+            if (newSlPrice < position.entryPrice) newSlPrice = position.entryPrice;
+        } else {
+            newSlPrice = currentPrice * (1 + TRAIL_PCT);
+            if (newSlPrice > position.entryPrice) newSlPrice = position.entryPrice;
+        }
+
+        // Only update if new SL is better than current SL
+        const isBetter = position.side === 'LONG'
+            ? newSlPrice > position.slPrice
+            : newSlPrice < position.slPrice;
+        if (!isBetter) return;
+
+        const newSlStr = this.formatPrice(newSlPrice, spec);
+        const remainingQtyStr = this.formatQty(remainingQty, spec);
+        if (remainingQtyStr === null) return;
+
+        console.log(`🔄 [TRAIL] ${position.symbol}: updating SL from ${position.slPrice.toFixed(4)} to ${newSlStr} (trail ${TRAIL_PCT*100}% from ${currentPrice})`);
+
+        if (DRY_RUN) return;
+
+        if (position.slPlanId) {
+            await this.cancelPlanOrder(position.symbol, 'loss_plan', position.slPlanId);
+        }
+        const newSlId = await this.placePlanOrder(
+            position.symbol, position.side, 'loss_plan', newSlStr, remainingQtyStr
+        );
+        if (!newSlId) {
+            console.error(`❌ [TRAIL] Failed to update trailing SL for ${position.symbol}`);
+            return;
+        }
+        position.slPrice = newSlPrice;
+        position.slPlanId = newSlId;
+        StateManager.persist();
     }
 
     // ─── Dynamic position sizing based on ATR and equity ───────────────────
@@ -217,23 +267,35 @@ export class ExecutionEngine {
         }
     }
 
-    public static async moveSLToBreakeven(position: ActivePosition, remainingQty: number): Promise<void> {
+    public static async moveSLToTrailing(position: ActivePosition, remainingQty: number, currentPrice: number): Promise<void> {
         const spec = this.specs.get(position.symbol);
         if (!spec) {
-            console.warn(`⚠️  [BE] No spec for ${position.symbol}, skipping BE move`);
+            console.warn(`⚠️  [TRAIL] No spec for ${position.symbol}, skipping trailing move`);
             return;
         }
-        const newSlStr = this.formatPrice(position.entryPrice, spec);
+
+        // Calculate trailing SL level
+        let newSlPrice: number;
+        if (position.side === 'LONG') {
+            newSlPrice = currentPrice * (1 - TRAIL_PCT);
+            // Ensure trailing SL is at least at entry (breakeven)
+            if (newSlPrice < position.entryPrice) newSlPrice = position.entryPrice;
+        } else {
+            newSlPrice = currentPrice * (1 + TRAIL_PCT);
+            if (newSlPrice > position.entryPrice) newSlPrice = position.entryPrice;
+        }
+
+        const newSlStr = this.formatPrice(newSlPrice, spec);
         const remainingQtyStr = this.formatQty(remainingQty, spec);
         if (remainingQtyStr === null) {
-            console.warn(`⚠️  [BE] Remaining qty ${remainingQty} below min, skipping BE move`);
+            console.warn(`⚠️  [TRAIL] Remaining qty ${remainingQty} below min, skipping trailing move`);
             return;
         }
 
-        console.log(`🛡️  [BE] ${position.symbol}: moving SL to entry ${newSlStr}, qty=${remainingQtyStr}`);
+        console.log(`🛡️  [TRAIL] ${position.symbol}: moving SL to ${newSlStr} (trail ${TRAIL_PCT*100}% from ${currentPrice}), qty=${remainingQtyStr}`);
 
         if (DRY_RUN) {
-            console.log(`💡 [DRY-RUN] BE move skipped for ${position.symbol}.`);
+            console.log(`💡 [DRY-RUN] Trailing move skipped for ${position.symbol}.`);
             return;
         }
 
@@ -244,9 +306,9 @@ export class ExecutionEngine {
             position.symbol, position.side, 'loss_plan', newSlStr, remainingQtyStr
         );
         if (!newSlId) {
-            console.error(`❌ [BE] Failed to place breakeven SL for ${position.symbol} — REMAINING POSITION UNPROTECTED`);
+            console.error(`❌ [TRAIL] Failed to place trailing SL for ${position.symbol} — REMAINING POSITION UNPROTECTED`);
         }
-        StateManager.updateAfterTp1(position.symbol, position.entryPrice, newSlId, remainingQty);
+        StateManager.updateAfterTp1(position.symbol, newSlPrice, newSlId, remainingQty);
     }
 
     public static async openPositionSMC(signal: SMCSignal) {
