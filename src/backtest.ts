@@ -328,6 +328,7 @@ interface BacktestMetrics {
     timeInMarket: number; // percentage of bars where position was open
     avgBarsHeld: number;
     tp1FillRate: number;
+    rrRatio: number;
 }
 
 function calculateMetrics(trades: Trade[], totalBars: number): BacktestMetrics {
