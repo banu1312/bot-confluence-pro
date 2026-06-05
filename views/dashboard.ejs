@@ -38,6 +38,15 @@
         </div>
     </header>
 
+    <!-- Equity curve chart -->
+    <section class="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-6">
+        <div class="flex justify-between items-center mb-3">
+            <h2 class="text-sm uppercase text-slate-500 font-semibold">Equity Curve (USDT)</h2>
+            <span class="text-xs text-slate-500">last <%= equityCurve.length %> snapshots</span>
+        </div>
+        <div id="equity-chart" class="w-full" style="height: 200px;"></div>
+    </section>
+
     <!-- Stats row -->
     <section class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div class="bg-slate-900 p-4 rounded-xl border border-slate-800">
@@ -145,6 +154,35 @@
     <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
     <script>
         (function() {
+            // Equity curve chart
+            const equityData = <%- JSON.stringify(equityCurve) %>;
+            if (equityData.length > 1 && typeof LightweightCharts !== 'undefined') {
+                const eqEl = document.getElementById('equity-chart');
+                if (eqEl) {
+                    const eqChart = LightweightCharts.createChart(eqEl, {
+                        width: eqEl.clientWidth,
+                        height: 200,
+                        layout: { background: { color: '#020617' }, textColor: '#94a3b8', fontSize: 11 },
+                        grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
+                        rightPriceScale: { borderColor: '#334155' },
+                        timeScale: { borderColor: '#334155', timeVisible: true, secondsVisible: false },
+                        crosshair: { mode: 0 },
+                        handleScroll: false,
+                        handleScale: false
+                    });
+                    const eqSeries = eqChart.addLineSeries({
+                        color: '#3b82f6',
+                        lineWidth: 2,
+                        priceFormat: { type: 'price', precision: 2, minMove: 0.01 }
+                    });
+                    eqSeries.setData(equityData);
+                    eqChart.timeScale().fitContent();
+                    window.addEventListener('resize', () => {
+                        eqChart.applyOptions({ width: eqEl.clientWidth });
+                    });
+                }
+            }
+
             const data = <%- JSON.stringify(charts.map(c => ({ candles: c.candles, levels: c.levels, plan: c.plan, hasData: c.hasData, pricePlace: c.pricePlace }))) %>;
             if (typeof LightweightCharts === 'undefined') return;
 

@@ -110,10 +110,17 @@ app.get('/', (req, res) => {
         };
     });
 
+    // Build equity curve data for chart
+    const equityCurve = StateManager.getEquityCurve().map(p => ({
+        time: Math.floor(p.time / 1000),
+        value: p.equity
+    }));
+
     res.render('dashboard', {
         positions: activePositionsWithPrice,
         wallet,
         charts,
+        equityCurve,
         daily: {
             date: dailyLoss.date,
             entries: dailyEntries,

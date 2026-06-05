@@ -67,9 +67,15 @@ export class StateManager {
     public static positions: ActivePosition[] = [];
     public static dailyLoss: DailyLossTracker = { date: utcDateStr(), realizedR: {} };
     public static account: AccountSnapshot | null = null;
+    public static equityHistory: { time: number; equity: number }[] = []; // for equity curve
 
     public static updateAccount(info: { equity: number; available: number; locked: number; unrealizedPL: number }) {
         this.account = { ...info, fetchedAt: Date.now() };
+        // Record equity snapshot for curve (max 500 points)
+        this.equityHistory.push({ time: Date.now(), equity: info.equity });
+        if (this.equityHistory.length > 500) {
+            this.equityHistory = this.equityHistory.slice(-500);
+        }
     }
 
     public static load() {
@@ -167,6 +173,11 @@ export class StateManager {
         p.slPlanId = newSlPlanId;
         p.qty = newQty;
         this.persist();
+    }
+
+    public static getEquityCurve(): { time: number; equity: number }[] {
+        // Return equity history for dashboard chart
+        return this.equityHistory;
     }
 
     public static reconcile(openSymbols: Set<string>) {
