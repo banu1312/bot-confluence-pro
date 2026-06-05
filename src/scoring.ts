@@ -2,7 +2,8 @@ import {
     MarketData, SwingPoint, Bias,
     findSwings, detectBias, findFVGs, isFVGUnmitigated, priceInZone,
     detectLiquiditySweep, findOrderBlock, zonesOverlap, hasDisplacementWithVolume,
-    isKillZone, structuralTPLevels, hasInducement
+    isKillZone, structuralTPLevels, hasInducement,
+    findMultiTimeframeFVG
 } from './smc';
 
 // Tunable confluence requirements. Toggle individual gates without recompiling logic.
@@ -15,6 +16,7 @@ export const SMC_CONFIG = {
     requireDisplacement: true,     // FVG-creating candle must be impulsive
     requireOBConfluence: false,    // RELAXED — confluence nice but not essential
     requireNoInducement: false,    // disabled until signal frequency is sufficient
+    requireMultiTimeframeFVG: true, // NEW: require LTF FVG inside HTF FVG
     killZoneOnly: false,           // only trade London/NY sessions (default OFF)
 
     htf4hSwingLookback: 5,
@@ -139,16 +141,33 @@ export class ScoringEngine {
         if (SMC_CONFIG.requireLiquiditySweep && sweptLevel === null) return ScoringEngine.reject('NO_SWEEP');
         if (sweptLevel !== null) confluence.push('LIQ_SWEEP');
 
-        // Gate 4: LTF FVG entry trigger
+        // Gate 4: LTF FVG entry trigger (with multi-timeframe validation)
         const currentIdxLtf = ltfCloses.length - 1;
-        const ltfFvgs = findFVGs(ltfHighs, ltfLows, fvgSide, SMC_CONFIG.ltfFvgMaxAge);
-        const validLtfFvgs = (SMC_CONFIG.requireUnmitigated
-            ? ltfFvgs.filter(f => isFVGUnmitigated(f, ltfCloses))
-            : ltfFvgs
-        ).filter(f => (currentIdxLtf - f.index) >= SMC_CONFIG.minFvgAge);
-        const ltfFvg = validLtfFvgs.find(f => priceInZone(currentPrice, f));
+        let ltfFvg: FVG | null = null;
+
+        if (SMC_CONFIG.requireMultiTimeframeFVG) {
+            // Use multi-timeframe FVG detection
+            ltfFvg = findMultiTimeframeFVG(
+                ltfHighs, ltfLows, ltfCloses,
+                data.highs1h, data.lows1h, data.closes1h,
+                fvgSide, currentPrice,
+                SMC_CONFIG.ltfFvgMaxAge,
+                SMC_CONFIG.htfFvgMaxAge,
+                SMC_CONFIG.requireUnmitigated
+            );
+        } else {
+            // Fallback to single-timeframe detection
+            const ltfFvgs = findFVGs(ltfHighs, ltfLows, fvgSide, SMC_CONFIG.ltfFvgMaxAge);
+            const validLtfFvgs = (SMC_CONFIG.requireUnmitigated
+                ? ltfFvgs.filter(f => isFVGUnmitigated(f, ltfCloses))
+                : ltfFvgs
+            ).filter(f => (currentIdxLtf - f.index) >= SMC_CONFIG.minFvgAge);
+            ltfFvg = validLtfFvgs.find(f => priceInZone(currentPrice, f)) ?? null;
+        }
+
         if (!ltfFvg) return ScoringEngine.reject('NO_LTF_FVG');
         confluence.push(`LTF_FVG_${ltfTimeframe}`);
+        if (SMC_CONFIG.requireMultiTimeframeFVG) confluence.push('MTF_FVG');
 
         // Gate 5: Displacement + volume — FVG candle must be impulsive AND volume-backed
         if (SMC_CONFIG.requireDisplacement) {

@@ -289,3 +289,58 @@ export function calculateATR(
     }
     return atr;
 }
+
+// ─── 14. Multi-timeframe FVG detection ─────────────────────────────────────
+// Finds LTF FVGs that are inside a valid HTF FVG zone.
+// Returns the LTF FVG that is closest to currentPrice, or null if none found.
+export function findMultiTimeframeFVG(
+    ltfHighs: number[],
+    ltfLows: number[],
+    ltfCloses: number[],
+    htfHighs: number[],
+    htfLows: number[],
+    htfCloses: number[],
+    side: 'BULLISH' | 'BEARISH',
+    currentPrice: number,
+    ltfMaxAge: number = 30,
+    htfMaxAge: number = 50,
+    requireUnmitigated: boolean = true
+): FVG | null {
+    // 1. Find HTF FVGs
+    const htfFvgs = findFVGs(htfHighs, htfLows, side, htfMaxAge);
+    const validHtfFvgs = requireUnmitigated
+        ? htfFvgs.filter(f => isFVGUnmitigated(f, htfCloses))
+        : htfFvgs;
+
+    if (validHtfFvgs.length === 0) return null;
+
+    // 2. Find LTF FVGs
+    const ltfFvgs = findFVGs(ltfHighs, ltfLows, side, ltfMaxAge);
+    const validLtfFvgs = requireUnmitigated
+        ? ltfFvgs.filter(f => isFVGUnmitigated(f, ltfCloses))
+        : ltfFvgs;
+
+    if (validLtfFvgs.length === 0) return null;
+
+    // 3. Find LTF FVGs that overlap with any HTF FVG
+    const overlapping: FVG[] = [];
+    for (const ltfFvg of validLtfFvgs) {
+        for (const htfFvg of validHtfFvgs) {
+            if (zonesOverlap(ltfFvg, htfFvg)) {
+                overlapping.push(ltfFvg);
+                break;
+            }
+        }
+    }
+
+    if (overlapping.length === 0) return null;
+
+    // 4. Return the one closest to currentPrice
+    overlapping.sort((a, b) => {
+        const midA = (a.top + a.bottom) / 2;
+        const midB = (b.top + b.bottom) / 2;
+        return Math.abs(midA - currentPrice) - Math.abs(midB - currentPrice);
+    });
+
+    return overlapping[0];
+}
