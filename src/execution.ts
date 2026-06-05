@@ -64,6 +64,14 @@ export class ExecutionEngine {
             const response = await axios(config);
             return response.data;
         } catch (error: any) {
+            const status = error.response?.status;
+            const isServerError = !status || status >= 500;
+            const isClientError = status && status >= 400 && status < 500;
+            if (isClientError) {
+                console.error(`❌ API Client Error (${endpoint}):`, error.response?.data || error.message);
+                // Return a special object so sendRequestWithRetry knows not to retry
+                return { _clientError: true, code: status, message: error.response?.data?.msg || error.message };
+            }
             console.error(`❌ API Error (${endpoint}):`, error.response?.data || error.message);
             return null;
         }
@@ -81,16 +89,26 @@ export class ExecutionEngine {
     ): Promise<any> {
         for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             const result = await this.sendRequest(method, endpoint, payload);
-            if (result !== null) return result;
-
-            // Check if we should retry (network error or 5xx)
-            // sendRequest already logs the error, so we just check if result is null
-            if (attempt < MAX_RETRIES) {
-                console.warn(`🔄 [RETRY] ${label || endpoint} attempt ${attempt}/${MAX_RETRIES} failed — retrying in ${RETRY_DELAY_MS}ms`);
-                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
-            } else {
-                console.error(`❌ [RETRY] ${label || endpoint} failed after ${MAX_RETRIES} attempts`);
+            
+            // If result is null (network error or 5xx), retry
+            if (result === null) {
+                if (attempt < MAX_RETRIES) {
+                    console.warn(`🔄 [RETRY] ${label || endpoint} attempt ${attempt}/${MAX_RETRIES} failed — retrying in ${RETRY_DELAY_MS}ms`);
+                    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+                } else {
+                    console.error(`❌ [RETRY] ${label || endpoint} failed after ${MAX_RETRIES} attempts`);
+                }
+                continue;
             }
+            
+            // If result is a client error (4xx), do NOT retry
+            if (result._clientError) {
+                console.error(`❌ [RETRY] ${label || endpoint} client error (${result.code}) — not retrying`);
+                return null;
+            }
+            
+            // Success
+            return result;
         }
         return null;
     }
@@ -100,22 +118,32 @@ export class ExecutionEngine {
     }
 
     public static async loadContractSpecs(): Promise<void> {
-        try {
-            const res = await axios.get(`${BASE_URL}/api/v2/mix/market/contracts?productType=USDT-FUTURES`);
-            const contracts = res.data?.data ?? [];
-            for (const c of contracts) {
-                this.specs.set(c.symbol, {
-                    pricePlace: parseInt(c.pricePlace, 10),
-                    priceEndStep: parseInt(c.priceEndStep, 10) || 1,
-                    volumePlace: parseInt(c.volumePlace, 10),
-                    sizeMultiplier: parseFloat(c.sizeMultiplier),
-                    minTradeNum: parseFloat(c.minTradeNum),
-                    minTradeUSDT: parseFloat(c.minTradeUSDT || '0')
-                });
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                const res = await axios.get(`${BASE_URL}/api/v2/mix/market/contracts?productType=USDT-FUTURES`);
+                const contracts = res.data?.data ?? [];
+                for (const c of contracts) {
+                    this.specs.set(c.symbol, {
+                        pricePlace: parseInt(c.pricePlace, 10),
+                        priceEndStep: parseInt(c.priceEndStep, 10) || 1,
+                        volumePlace: parseInt(c.volumePlace, 10),
+                        sizeMultiplier: parseFloat(c.sizeMultiplier),
+                        minTradeNum: parseFloat(c.minTradeNum),
+                        minTradeUSDT: parseFloat(c.minTradeUSDT || '0')
+                    });
+                }
+                console.log(`📐 [SPECS] Loaded contract specs for ${this.specs.size} symbols`);
+                return;
+            } catch (error: any) {
+                const isServerError = error.response?.status >= 500 || !error.response;
+                if (attempt < MAX_RETRIES && isServerError) {
+                    console.warn(`🔄 [RETRY] loadContractSpecs attempt ${attempt}/${MAX_RETRIES} failed — retrying in ${RETRY_DELAY_MS}ms`);
+                    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+                } else {
+                    console.error(`❌ [SPECS] Failed to load contract specs after ${attempt} attempts:`, error.message);
+                    return;
+                }
             }
-            console.log(`📐 [SPECS] Loaded contract specs for ${this.specs.size} symbols`);
-        } catch (error: any) {
-            console.error('❌ [SPECS] Failed to load contract specs:', error.message);
         }
     }
 
