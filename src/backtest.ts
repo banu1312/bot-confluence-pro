@@ -416,6 +416,8 @@ function calculateMetrics(trades: Trade[], totalBars: number): BacktestMetrics {
     // TP1 fill rate
     const tp1FillRate = trades.filter(t => t.tpHit[0]).length / n;
 
+    const rrRatio = avgLoss !== 0 ? avgWin / Math.abs(avgLoss) : (avgWin > 0 ? Infinity : 0);
+
     return {
         totalTrades: n,
         winRate,
@@ -435,7 +437,8 @@ function calculateMetrics(trades: Trade[], totalBars: number): BacktestMetrics {
         ulcerIndex,
         timeInMarket,
         avgBarsHeld,
-        tp1FillRate
+        tp1FillRate,
+        rrRatio
     };
 }
 
@@ -585,6 +588,7 @@ function printCombinedReport(allTrades: Trade[], days: number): void {
     console.log(`  Max win streak:        ${metrics.maxConsecutiveWins}`);
     console.log(`  Avg win:               ${metrics.avgWin >= 0 ? '+' : ''}${metrics.avgWin.toFixed(2)}R`);
     console.log(`  Avg loss:              ${metrics.avgLoss.toFixed(2)}R`);
+    console.log(`  RR ratio (avg win / avg loss): ${metrics.rrRatio === Infinity ? '∞' : metrics.rrRatio.toFixed(2)}`);
     console.log(`  Profit factor:         ${metrics.profitFactor === Infinity ? '∞' : metrics.profitFactor.toFixed(2)}`);
     console.log(`  Expectancy:            ${metrics.expectancy >= 0 ? '+' : ''}${metrics.expectancy.toFixed(2)}R`);
     console.log(`  Sharpe ratio (ann.):   ${metrics.sharpeRatio.toFixed(2)}`);
@@ -632,6 +636,12 @@ async function main() {
         symbols = COINS_QUALITY;
         const dArg = args.find(a => !a.startsWith('--'));
         days = dArg ? parseInt(dArg, 10) : 365;
+    } else if (args.includes('--preset=3year')) {
+        symbols = COINS_QUALITY;
+        days = 1095; // ~3 years (June 2023 – June 2026)
+    } else if (args.includes('--preset=3year')) {
+        symbols = COINS_QUALITY;
+        days = 1095; // ~3 years (June 2023 – June 2026)
     } else if (args.includes('--preset=screener')) {
         const dArg = args.find(a => !a.startsWith('--'));
         days = dArg ? parseInt(dArg, 10) : 365;
