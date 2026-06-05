@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { StateManager, ActivePosition } from './state';
 import { SMCSignal } from './scoring';
+import { calculateATR } from './smc';
 dotenv.config();
 
 const API_KEY = process.env.EXCHANGE_API_KEY || '';
@@ -12,6 +13,11 @@ const MARGIN = parseFloat(process.env.MARGIN_PER_TRADE || '10');
 const LEVERAGE = 20;
 const DRY_RUN = process.env.DRY_RUN === 'true';
 const MAX_DAILY_LOSS_R = parseFloat(process.env.MAX_DAILY_LOSS_R || '3');
+
+// Dynamic position sizing parameters
+const RISK_PER_TRADE_PCT = parseFloat(process.env.RISK_PER_TRADE_PCT || '1');
+const ATR_PERIOD = parseInt(process.env.ATR_PERIOD || '14', 10);
+const ATR_MULTIPLIER_SL = parseFloat(process.env.ATR_MULTIPLIER_SL || '2');
 
 const BASE_URL = 'https://api.bitget.com';
 
@@ -90,6 +96,31 @@ export class ExecutionEngine {
         const stepped = Math.floor(qty / spec.sizeMultiplier) * spec.sizeMultiplier;
         if (stepped < spec.minTradeNum) return null;
         return stepped.toFixed(spec.volumePlace);
+    }
+
+    // ─── Dynamic position sizing based on ATR and equity ───────────────────
+    // Calculates qty so that the dollar risk (entry - SL) equals
+    // RISK_PER_TRADE_PCT % of current equity.
+    private static calculateDynamicQty(
+        symbol: string,
+        entryPrice: number,
+        side: 'LONG' | 'SHORT',
+        slPrice: number,
+        equity: number
+    ): number | null {
+        const spec = this.specs.get(symbol);
+        if (!spec) return null;
+
+        const slDistance = Math.abs(entryPrice - slPrice);
+        if (slDistance <= 0) return null;
+
+        const riskAmount = equity * (RISK_PER_TRADE_PCT / 100);
+        const rawQty = riskAmount / slDistance;
+
+        const qtyStr = this.formatQty(rawQty, spec);
+        if (qtyStr === null) return null;
+
+        return parseFloat(qtyStr);
     }
 
     private static async ensureSymbolConfig(symbol: string): Promise<boolean> {
@@ -244,14 +275,32 @@ export class ExecutionEngine {
             const slStr = this.formatPrice(sl, spec);
             const tpStrs = tpLevels.map(tp => this.formatPrice(tp, spec));
 
-            // Total qty
-            const rawQty = (MARGIN * LEVERAGE) / entryPrice;
-            const totalQtyStr = this.formatQty(rawQty, spec);
-            if (totalQtyStr === null) {
-                console.warn(`⚠️  [EXEC] ${symbol}: qty ${rawQty.toFixed(8)} below minTradeNum`);
+            // Dynamic position sizing based on ATR and equity
+            const acct = await this.fetchAccountInfo();
+            if (!acct || acct.available < MARGIN) {
+                console.warn(`⚠️  [EXEC] ${symbol}: insufficient margin (available: ${acct?.available.toFixed(2) ?? 0} USDT, needed: ${MARGIN} USDT)`);
                 return;
             }
-            const totalQtyNum = parseFloat(totalQtyStr);
+
+            // Calculate ATR for the relevant LTF (5m or 15m)
+            const atr = calculateATR(
+                signal.ltfTimeframe === '5m' ? signal.data?.highs5m ?? [] : signal.data?.highs15m ?? [],
+                signal.ltfTimeframe === '5m' ? signal.data?.lows5m ?? [] : signal.data?.lows15m ?? [],
+                signal.ltfTimeframe === '5m' ? signal.data?.closes5m ?? [] : signal.data?.closes15m ?? [],
+                ATR_PERIOD
+            );
+
+            // Use dynamic qty based on risk % of equity
+            const totalQtyNum = this.calculateDynamicQty(symbol, entryPrice, side, sl, acct.equity);
+            if (totalQtyNum === null) {
+                console.warn(`⚠️  [EXEC] ${symbol}: dynamic qty calculation failed`);
+                return;
+            }
+            const totalQtyStr = this.formatQty(totalQtyNum, spec);
+            if (totalQtyStr === null) {
+                console.warn(`⚠️  [EXEC] ${symbol}: qty ${totalQtyNum.toFixed(8)} below minTradeNum`);
+                return;
+            }
 
             const notional = totalQtyNum * entryPrice;
             if (spec.minTradeUSDT > 0 && notional < spec.minTradeUSDT) {
@@ -278,12 +327,6 @@ export class ExecutionEngine {
                 return;
             }
             tpQtys.push(lastQtyStr);
-
-            const acct = await this.fetchAccountInfo();
-            if (!acct || acct.available < MARGIN) {
-                console.warn(`⚠️  [EXEC] ${symbol}: insufficient margin (available: ${acct?.available.toFixed(2) ?? 0} USDT, needed: ${MARGIN} USDT)`);
-                return;
-            }
 
             const configured = await this.ensureSymbolConfig(symbol);
             if (!configured) return;

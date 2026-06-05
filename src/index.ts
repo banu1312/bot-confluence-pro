@@ -15,6 +15,8 @@ async function initBot() {
     if (process.env.DRY_RUN === 'true') {
         console.log("🧪 DRY-RUN MODE: orders will NOT be placed");
     }
+    console.log(`📊 [RISK] Risk per trade: ${process.env.RISK_PER_TRADE_PCT || '1'}% of equity`);
+    console.log(`📊 [ATR] ATR period: ${process.env.ATR_PERIOD || '14'}, SL multiplier: ${process.env.ATR_MULTIPLIER_SL || '2'}`);
     console.log("=========================================\n");
 
     // 0. Load persisted state + contract specs (parallel)

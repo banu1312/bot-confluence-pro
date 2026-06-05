@@ -256,3 +256,36 @@ export function structuralTPLevels(
             .slice(0, count);
     }
 }
+
+// ─── 13. Average True Range (ATR) calculation ──────────────────────────────
+// Uses Wilder's smoothed RMA (same as Pine Script's rma()).
+// Returns the latest ATR value for the given period.
+export function calculateATR(
+    highs: number[],
+    lows: number[],
+    closes: number[],
+    period: number = 14
+): number {
+    if (highs.length < period + 1) return 0;
+
+    const trValues: number[] = [];
+    for (let i = 1; i < highs.length; i++) {
+        const high = highs[i];
+        const low = lows[i];
+        const prevClose = closes[i - 1];
+        const tr = Math.max(
+            high - low,
+            Math.abs(high - prevClose),
+            Math.abs(low - prevClose)
+        );
+        trValues.push(tr);
+    }
+
+    // RMA (Wilder's smoothing) – same as Pine Script's rma()
+    const alpha = 1 / period;
+    let atr = trValues.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    for (let i = period; i < trValues.length; i++) {
+        atr = (trValues[i] - atr) * alpha + atr;
+    }
+    return atr;
+}
