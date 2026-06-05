@@ -68,6 +68,8 @@ export class StateManager {
     public static dailyLoss: DailyLossTracker = { date: utcDateStr(), realizedR: {} };
     public static account: AccountSnapshot | null = null;
     public static equityHistory: { time: number; equity: number }[] = []; // for equity curve
+    public static drawdownHistory: { time: number; drawdown: number }[] = []; // for drawdown curve
+    public static tradeMarkers: { time: number; type: 'entry' | 'exit'; side: 'LONG' | 'SHORT'; r: number }[] = []; // for trade markers
 
     public static updateAccount(info: { equity: number; available: number; locked: number; unrealizedPL: number }) {
         this.account = { ...info, fetchedAt: Date.now() };
@@ -75,6 +77,15 @@ export class StateManager {
         this.equityHistory.push({ time: Date.now(), equity: info.equity });
         if (this.equityHistory.length > 500) {
             this.equityHistory = this.equityHistory.slice(-500);
+        }
+
+        // Calculate drawdown from peak equity
+        const peak = Math.max(...this.equityHistory.map(e => e.equity));
+        const currentEquity = info.equity;
+        const drawdown = peak > 0 ? (peak - currentEquity) / peak : 0;
+        this.drawdownHistory.push({ time: Date.now(), drawdown });
+        if (this.drawdownHistory.length > 500) {
+            this.drawdownHistory = this.drawdownHistory.slice(-500);
         }
     }
 
@@ -138,6 +149,7 @@ export class StateManager {
         const sign = r >= 0 ? '+' : '';
         const totalSign = newTotal >= 0 ? '+' : '';
         console.log(`📊 [CLOSE] ${pos.symbol}: ${sign}${r.toFixed(2)}R | today total: ${totalSign}${newTotal.toFixed(2)}R`);
+        this.recordTradeMarker('exit', pos.side, r);
         return r;
     }
 
@@ -175,9 +187,24 @@ export class StateManager {
         this.persist();
     }
 
+    public static recordTradeMarker(type: 'entry' | 'exit', side: 'LONG' | 'SHORT', r: number) {
+        this.tradeMarkers.push({ time: Date.now(), type, side, r });
+        if (this.tradeMarkers.length > 200) {
+            this.tradeMarkers = this.tradeMarkers.slice(-200);
+        }
+    }
+
     public static getEquityCurve(): { time: number; equity: number }[] {
         // Return equity history for dashboard chart
         return this.equityHistory;
+    }
+
+    public static getDrawdownCurve(): { time: number; drawdown: number }[] {
+        return this.drawdownHistory;
+    }
+
+    public static getTradeMarkers(): { time: number; type: 'entry' | 'exit'; side: 'LONG' | 'SHORT'; r: number }[] {
+        return this.tradeMarkers;
     }
 
     public static reconcile(openSymbols: Set<string>) {

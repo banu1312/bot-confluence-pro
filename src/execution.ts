@@ -510,6 +510,7 @@ export class ExecutionEngine {
                 tpPlanIds,
                 breakevenMoved: false
             });
+            StateManager.recordTradeMarker('entry', side, 0);
         } finally {
             this.executingSymbols.delete(symbol);
         }

@@ -116,11 +116,27 @@ app.get('/', (req, res) => {
         value: p.equity
     }));
 
+    // Build drawdown curve data for chart
+    const drawdownCurve = StateManager.getDrawdownCurve().map(p => ({
+        time: Math.floor(p.time / 1000),
+        value: p.drawdown * 100 // convert to percentage
+    }));
+
+    // Build trade markers for chart
+    const tradeMarkers = StateManager.getTradeMarkers().map(p => ({
+        time: Math.floor(p.time / 1000),
+        type: p.type,
+        side: p.side,
+        r: p.r
+    }));
+
     res.render('dashboard', {
         positions: activePositionsWithPrice,
         wallet,
         charts,
         equityCurve,
+        drawdownCurve,
+        tradeMarkers,
         daily: {
             date: dailyLoss.date,
             entries: dailyEntries,

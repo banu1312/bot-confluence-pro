@@ -38,13 +38,13 @@
         </div>
     </header>
 
-    <!-- Equity curve chart -->
+    <!-- Equity curve chart with drawdown and trade markers -->
     <section class="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-6">
         <div class="flex justify-between items-center mb-3">
             <h2 class="text-sm uppercase text-slate-500 font-semibold">Equity Curve (USDT)</h2>
-            <span class="text-xs text-slate-500">last <%= equityCurve.length %> snapshots</span>
+            <span class="text-xs text-slate-500">last <%= equityCurve.length %> snapshots · <%= tradeMarkers.length %> trades</span>
         </div>
-        <div id="equity-chart" class="w-full" style="height: 200px;"></div>
+        <div id="equity-chart" class="w-full" style="height: 250px;"></div>
     </section>
 
     <!-- Stats row -->
@@ -154,14 +154,16 @@
     <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
     <script>
         (function() {
-            // Equity curve chart
+            // Equity curve chart with drawdown and trade markers
             const equityData = <%- JSON.stringify(equityCurve) %>;
+            const drawdownData = <%- JSON.stringify(drawdownCurve) %>;
+            const markersData = <%- JSON.stringify(tradeMarkers) %>;
             if (equityData.length > 1 && typeof LightweightCharts !== 'undefined') {
                 const eqEl = document.getElementById('equity-chart');
                 if (eqEl) {
                     const eqChart = LightweightCharts.createChart(eqEl, {
                         width: eqEl.clientWidth,
-                        height: 200,
+                        height: 250,
                         layout: { background: { color: '#020617' }, textColor: '#94a3b8', fontSize: 11 },
                         grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
                         rightPriceScale: { borderColor: '#334155' },
@@ -170,12 +172,39 @@
                         handleScroll: false,
                         handleScale: false
                     });
+
+                    // Equity line
                     const eqSeries = eqChart.addLineSeries({
                         color: '#3b82f6',
                         lineWidth: 2,
                         priceFormat: { type: 'price', precision: 2, minMove: 0.01 }
                     });
                     eqSeries.setData(equityData);
+
+                    // Drawdown area (as percentage)
+                    if (drawdownData.length > 1) {
+                        const ddSeries = eqChart.addAreaSeries({
+                            topColor: 'rgba(239, 68, 68, 0.3)',
+                            bottomColor: 'rgba(239, 68, 68, 0.05)',
+                            lineColor: 'rgba(239, 68, 68, 0.8)',
+                            lineWidth: 1,
+                            priceFormat: { type: 'percent', precision: 1, minMove: 0.1 }
+                        });
+                        ddSeries.setData(drawdownData);
+                    }
+
+                    // Trade markers (entry/exit)
+                    if (markersData.length > 0) {
+                        const markers = markersData.map(m => ({
+                            time: m.time,
+                            position: m.type === 'entry' ? 'belowBar' : 'aboveBar',
+                            color: m.r >= 0 ? '#10b981' : '#ef4444',
+                            shape: m.type === 'entry' ? 'arrowUp' : 'arrowDown',
+                            text: m.type === 'entry' ? (m.side === 'LONG' ? 'L' : 'S') : (m.r >= 0 ? '+' : '') + m.r.toFixed(1) + 'R'
+                        }));
+                        eqSeries.setMarkers(markers);
+                    }
+
                     eqChart.timeScale().fitContent();
                     window.addEventListener('resize', () => {
                         eqChart.applyOptions({ width: eqEl.clientWidth });
