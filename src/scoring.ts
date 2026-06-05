@@ -26,6 +26,17 @@ const MIN_FVG_AGE = parseInt(process.env.MIN_FVG_AGE || '1', 10);
 const LTF_FVG_MAX_AGE = parseInt(process.env.LTF_FVG_MAX_AGE || '30', 10);
 const HTF_FVG_MAX_AGE = parseInt(process.env.HTF_FVG_MAX_AGE || '50', 10);
 
+// Additional SMC parameters
+const HTF_4H_SWING_LOOKBACK = parseInt(process.env.HTF_4H_SWING_LOOKBACK || '5', 10);
+const HTF_SWING_LOOKBACK = parseInt(process.env.HTF_SWING_LOOKBACK || '3', 10);
+const LTF_SWING_LOOKBACK = parseInt(process.env.LTF_SWING_LOOKBACK || '2', 10);
+const SWEEP_WINDOW = parseInt(process.env.SWEEP_WINDOW || '5', 10);
+const SWEEP_LOOKBACK_BARS = parseInt(process.env.SWEEP_LOOKBACK_BARS || '25', 10);
+const OB_LOOKBACK = parseInt(process.env.OB_LOOKBACK || '5', 10);
+const MIN_INDUCEMENT_BARS = parseInt(process.env.MIN_INDUCEMENT_BARS || '2', 10);
+const DISPLACEMENT_MIN_BODY = parseFloat(process.env.DISPLACEMENT_MIN_BODY || '0.5');
+const DISPLACEMENT_MIN_VOL_MULTIPLIER = parseFloat(process.env.DISPLACEMENT_MIN_VOL_MULTIPLIER || '1.0');
+
 export const SMC_CONFIG = {
     requireStructureBias: REQUIRE_STRUCTURE_BIAS,    // HTF 1H must be HH-HL (LONG) or LH-LL (SHORT)
     require4hBias: REQUIRE_4H_BIAS,           // 4H must not contradict 1H bias
@@ -37,17 +48,17 @@ export const SMC_CONFIG = {
     requireMultiTimeframeFVG: REQUIRE_MTF_FVG, // NEW: require LTF FVG inside HTF FVG (env: REQUIRE_MTF_FVG)
     killZoneOnly: KILL_ZONE_ONLY,           // only trade London/NY sessions (default OFF)
 
-    htf4hSwingLookback: 5,
-    htfSwingLookback: 3,
-    ltfSwingLookback: 2,
+    htf4hSwingLookback: HTF_4H_SWING_LOOKBACK,
+    htfSwingLookback: HTF_SWING_LOOKBACK,
+    ltfSwingLookback: LTF_SWING_LOOKBACK,
     htfFvgMaxAge: HTF_FVG_MAX_AGE,              // 1H bars to scan back for HTF FVG
     ltfFvgMaxAge: LTF_FVG_MAX_AGE,              // 5m bars to scan back for LTF FVG
-    sweepWindow: 5,
-    sweepLookbackBars: 25,         // how far back to scan for liquidity targets
-    obLookback: 5,
-    minInducementBars: 2,          // ignore very recent swings near entry zone
-    displacementMinBody: 0.5,
-    displacementMinVolMultiplier: 1.0,
+    sweepWindow: SWEEP_WINDOW,
+    sweepLookbackBars: SWEEP_LOOKBACK_BARS,         // how far back to scan for liquidity targets
+    obLookback: OB_LOOKBACK,
+    minInducementBars: MIN_INDUCEMENT_BARS,          // ignore very recent swings near entry zone
+    displacementMinBody: DISPLACEMENT_MIN_BODY,
+    displacementMinVolMultiplier: DISPLACEMENT_MIN_VOL_MULTIPLIER,
     slBufferPct: SL_BUFFER_PCT,            // 0.2% buffer beyond FVG edge for SL
     minRR: MIN_RR,                      // higher bar = only high-conviction setups fire
     tpCount: TP_COUNT,                    // number of TP tiers

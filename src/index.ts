@@ -33,6 +33,15 @@ async function initBot() {
     console.log(`📊 [SMC] Min FVG age: ${process.env.MIN_FVG_AGE || '1'} bars`);
     console.log(`📊 [SMC] LTF FVG max age: ${process.env.LTF_FVG_MAX_AGE || '30'} bars`);
     console.log(`📊 [SMC] HTF FVG max age: ${process.env.HTF_FVG_MAX_AGE || '50'} bars`);
+    console.log(`📊 [SMC] HTF 4H swing lookback: ${process.env.HTF_4H_SWING_LOOKBACK || '5'}`);
+    console.log(`📊 [SMC] HTF swing lookback: ${process.env.HTF_SWING_LOOKBACK || '3'}`);
+    console.log(`📊 [SMC] LTF swing lookback: ${process.env.LTF_SWING_LOOKBACK || '2'}`);
+    console.log(`📊 [SMC] Sweep window: ${process.env.SWEEP_WINDOW || '5'}`);
+    console.log(`📊 [SMC] Sweep lookback bars: ${process.env.SWEEP_LOOKBACK_BARS || '25'}`);
+    console.log(`📊 [SMC] OB lookback: ${process.env.OB_LOOKBACK || '5'}`);
+    console.log(`📊 [SMC] Min inducement bars: ${process.env.MIN_INDUCEMENT_BARS || '2'}`);
+    console.log(`📊 [SMC] Displacement min body: ${process.env.DISPLACEMENT_MIN_BODY || '0.5'}`);
+    console.log(`📊 [SMC] Displacement min vol multiplier: ${process.env.DISPLACEMENT_MIN_VOL_MULTIPLIER || '1.0'}`);
     console.log("=========================================\n");
 
     // 0. Load persisted state + contract specs (parallel)
