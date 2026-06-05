@@ -4,9 +4,9 @@ import { Screener } from './screener';
 import { ExecutionEngine } from './execution';
 import { StateManager } from './state';
 
-const RECONCILE_MS = 30_000;
-const RESCREEN_MS = 4 * 60 * 60 * 1000; // 4 hours
-const BATCH_SIZE = 5; // Batasan jumlah koin per-proses untuk hemat RAM
+const RECONCILE_MS = parseInt(process.env.RECONCILE_MS || '30000', 10);
+const RESCREEN_MS = parseInt(process.env.RESCREEN_MS || (4 * 60 * 60 * 1000).toString(), 10); // 4 hours default
+const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || '5', 10); // Batasan jumlah koin per-proses untuk hemat RAM
 
 async function initBot() {
     console.clear();

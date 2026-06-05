@@ -5,7 +5,8 @@ import { marketData, wsHealth } from './websocket';
 import { ExecutionEngine } from './execution';
 
 const MARGIN = parseFloat(process.env.MARGIN_PER_TRADE || '10');
-const CHART_BARS = 100;
+const CHART_BARS = parseInt(process.env.CHART_BARS || '100', 10);
+const PORT = parseInt(process.env.PORT || '3000', 10);
 
 type Timeframe = '5m' | '1h';
 const INTERVAL_MS: Record<Timeframe, number> = {
@@ -160,4 +161,4 @@ app.get('/', (req, res) => {
     });
 });
 
-app.listen(3000, () => console.log("🚀 Dashboard Web 100% Aktif di http://localhost:3000"));
+app.listen(PORT, () => console.log(`🚀 Dashboard Web 100% Aktif di http://localhost:${PORT}`));

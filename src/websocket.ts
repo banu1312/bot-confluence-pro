@@ -23,12 +23,12 @@ export const wsHealth = {
     status: 'DISCONNECTED' as 'CONNECTED' | 'DISCONNECTED' | 'RECONNECTING' | 'ERROR'
 };
 
-const WS_URL = 'wss://ws.bitget.com/v2/ws/public';
-const PING_MS = 25_000;
-const MAX_BACKOFF_MS = 30_000;
-const MAX_CONSECUTIVE_FAILURES = 8;
-const HEALTH_CHECK_MS = 30_000;  // check every 30 seconds
-const PONG_TIMEOUT_MS = 60_000;  // consider dead after 60s without pong
+const WS_URL = process.env.WS_URL || 'wss://ws.bitget.com/v2/ws/public';
+const PING_MS = parseInt(process.env.WS_PING_MS || '25000', 10);
+const MAX_BACKOFF_MS = parseInt(process.env.WS_MAX_BACKOFF_MS || '30000', 10);
+const MAX_CONSECUTIVE_FAILURES = parseInt(process.env.WS_MAX_CONSECUTIVE_FAILURES || '8', 10);
+const HEALTH_CHECK_MS = parseInt(process.env.WS_HEALTH_CHECK_MS || '30000', 10);  // check every 30 seconds
+const PONG_TIMEOUT_MS = parseInt(process.env.WS_PONG_TIMEOUT_MS || '60000', 10);  // consider dead after 60s without pong
 
 // --- Caching Engine untuk Dashboard ---
 type PlanStatus = 'READY' | 'WAITING' | 'INVALIDATED';

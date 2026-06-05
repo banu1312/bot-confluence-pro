@@ -10,7 +10,7 @@ const API_KEY = process.env.EXCHANGE_API_KEY || '';
 const API_SECRET = process.env.EXCHANGE_API_SECRET || '';
 const API_PASSPHRASE = process.env.EXCHANGE_API_PASSPHRASE || '';
 const MARGIN = parseFloat(process.env.MARGIN_PER_TRADE || '10');
-const LEVERAGE = 20;
+const LEVERAGE = parseInt(process.env.LEVERAGE || '20', 10);
 const DRY_RUN = process.env.DRY_RUN === 'true';
 const MAX_DAILY_LOSS_R = parseFloat(process.env.MAX_DAILY_LOSS_R || '3');
 
