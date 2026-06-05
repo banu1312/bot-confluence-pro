@@ -103,21 +103,25 @@ describe('detectBias', () => {
 // ─── findFVGs ───────────────────────────────────────────────────────────────
 describe('findFVGs', () => {
   it('should detect bullish FVG', () => {
-    const highs = [10, 12, 11];
-    const lows = [8, 9, 10];
+    // Create a gap: candle 0 high=10, candle 2 low=12 => 12 > 10 => bullish FVG
+    const highs = [10, 11, 13];
+    const lows = [8, 9, 12];
     const fvgs = findFVGs(highs, lows, 'BULLISH', 10);
     expect(fvgs.length).toBe(1);
     expect(fvgs[0].side).toBe('BULLISH');
-    expect(fvgs[0].bottom).toBe(9); // highs[i-2] = 12? Wait: lows[i] > highs[i-2] => lows[2]=10 > highs[0]=10? Actually 10 > 10 is false. Let's adjust.
-    // Better test:
+    expect(fvgs[0].bottom).toBe(10); // highs[i-2] = highs[0] = 10
+    expect(fvgs[0].top).toBe(12);    // lows[i] = lows[2] = 12
   });
 
   it('should detect bearish FVG', () => {
-    const highs = [12, 11, 10];
-    const lows = [10, 9, 8];
+    // Create a gap: candle 0 low=12, candle 2 high=10 => 10 < 12 => bearish FVG
+    const highs = [13, 12, 10];
+    const lows = [12, 11, 9];
     const fvgs = findFVGs(highs, lows, 'BEARISH', 10);
-    // highs[i] < lows[i-2] => highs[2]=10 < lows[0]=10? 10 < 10 false. Need proper data.
-    // We'll test with clear gap.
+    expect(fvgs.length).toBe(1);
+    expect(fvgs[0].side).toBe('BEARISH');
+    expect(fvgs[0].bottom).toBe(10); // highs[i] = highs[2] = 10
+    expect(fvgs[0].top).toBe(12);    // lows[i-2] = lows[0] = 12
   });
 
   it('should return empty when no FVG', () => {
@@ -172,16 +176,16 @@ describe('priceInZone', () => {
 // ─── detectLiquiditySweep ───────────────────────────────────────────────────
 describe('detectLiquiditySweep', () => {
   it('should detect LONG sweep', () => {
+    // Create a sweep: candle 3 low=99 < swing low 100, and close=101 > 100
     const swings: SwingPoint[] = [
       { index: 0, price: 100, type: 'LOW' },
       { index: 2, price: 110, type: 'HIGH' },
     ];
     const highs = [105, 108, 112, 115, 118];
-    const lows = [102, 104, 106, 108, 110];
-    const closes = [104, 107, 110, 112, 115];
+    const lows = [102, 104, 106, 99, 110];  // candle 3 low=99 < 100
+    const closes = [104, 107, 110, 101, 115]; // candle 3 close=101 > 100
     const result = detectLiquiditySweep(swings, highs, lows, closes, 'LONG', 3, 10);
-    // No sweep because lows never go below 100
-    expect(result).toBeNull();
+    expect(result).toBe(100); // swept level = 100
   });
 
   it('should return null when no sweep found', () => {
@@ -199,8 +203,9 @@ describe('detectLiquiditySweep', () => {
 // ─── findOrderBlock ─────────────────────────────────────────────────────────
 describe('findOrderBlock', () => {
   it('should find bearish order block for bullish FVG', () => {
+    // FVG at index 2 (candle 2). Look back: candle 1 is bearish (close < open)
     const opens = [100, 102, 101];
-    const closes = [102, 100, 103];
+    const closes = [102, 100, 103]; // candle 1: close=100 < open=102 => bearish
     const highs = [103, 103, 104];
     const lows = [99, 99, 100];
     const ob = findOrderBlock(opens, closes, highs, lows, 2, 'BULLISH', 5);
