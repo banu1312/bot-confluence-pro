@@ -32,6 +32,10 @@ export type Bias = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 // A candle at index i is a swing high if its high is strictly greater than the
 // `lookback` candles on both sides. Symmetric definition for swing lows.
 export function findSwings(highs: number[], lows: number[], lookback: number = 2): SwingPoint[] {
+    // Guard: insufficient data for swing detection
+    if (highs.length < lookback * 2 + 1 || lows.length < lookback * 2 + 1) {
+        return [];
+    }
     const out: SwingPoint[] = [];
     for (let i = 0; i < highs.length; i++) {
         // Need at least lookback candles on both sides to be a valid swing
