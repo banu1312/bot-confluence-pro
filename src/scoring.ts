@@ -9,35 +9,49 @@ import {
 // Tunable confluence requirements. Toggle individual gates without recompiling logic.
 // PRESET: "Sniper RR" — relaxed gates + high RR threshold for high-reward setups.
 
-// Environment variable override for requireMultiTimeframeFVG
+// Environment variable overrides for all SMC_CONFIG parameters
 const REQUIRE_MTF_FVG = process.env.REQUIRE_MTF_FVG === 'true' || process.env.REQUIRE_MTF_FVG === undefined;
+const REQUIRE_STRUCTURE_BIAS = process.env.REQUIRE_STRUCTURE_BIAS !== 'false';
+const REQUIRE_4H_BIAS = process.env.REQUIRE_4H_BIAS !== 'false';
+const REQUIRE_UNMITIGATED = process.env.REQUIRE_UNMITIGATED !== 'false';
+const REQUIRE_LIQUIDITY_SWEEP = process.env.REQUIRE_LIQUIDITY_SWEEP !== 'false';
+const REQUIRE_DISPLACEMENT = process.env.REQUIRE_DISPLACEMENT !== 'false';
+const REQUIRE_OB_CONFLUENCE = process.env.REQUIRE_OB_CONFLUENCE === 'true';
+const REQUIRE_NO_INDUCEMENT = process.env.REQUIRE_NO_INDUCEMENT === 'true';
+const KILL_ZONE_ONLY = process.env.KILL_ZONE_ONLY === 'true';
+const MIN_RR = parseFloat(process.env.MIN_RR || '3');
+const TP_COUNT = parseInt(process.env.TP_COUNT || '2', 10);
+const SL_BUFFER_PCT = parseFloat(process.env.SL_BUFFER_PCT || '0.002');
+const MIN_FVG_AGE = parseInt(process.env.MIN_FVG_AGE || '1', 10);
+const LTF_FVG_MAX_AGE = parseInt(process.env.LTF_FVG_MAX_AGE || '30', 10);
+const HTF_FVG_MAX_AGE = parseInt(process.env.HTF_FVG_MAX_AGE || '50', 10);
 
 export const SMC_CONFIG = {
-    requireStructureBias: true,    // HTF 1H must be HH-HL (LONG) or LH-LL (SHORT)
-    require4hBias: true,           // 4H must not contradict 1H bias
-    requireUnmitigated: true,      // skip already-filled FVGs
-    requireLiquiditySweep: true,   // RE-ENABLED — quality > quantity
-    requireDisplacement: true,     // FVG-creating candle must be impulsive
-    requireOBConfluence: false,    // RELAXED — confluence nice but not essential
-    requireNoInducement: false,    // disabled until signal frequency is sufficient
+    requireStructureBias: REQUIRE_STRUCTURE_BIAS,    // HTF 1H must be HH-HL (LONG) or LH-LL (SHORT)
+    require4hBias: REQUIRE_4H_BIAS,           // 4H must not contradict 1H bias
+    requireUnmitigated: REQUIRE_UNMITIGATED,      // skip already-filled FVGs
+    requireLiquiditySweep: REQUIRE_LIQUIDITY_SWEEP,   // RE-ENABLED — quality > quantity
+    requireDisplacement: REQUIRE_DISPLACEMENT,     // FVG-creating candle must be impulsive
+    requireOBConfluence: REQUIRE_OB_CONFLUENCE,    // RELAXED — confluence nice but not essential
+    requireNoInducement: REQUIRE_NO_INDUCEMENT,    // disabled until signal frequency is sufficient
     requireMultiTimeframeFVG: REQUIRE_MTF_FVG, // NEW: require LTF FVG inside HTF FVG (env: REQUIRE_MTF_FVG)
-    killZoneOnly: false,           // only trade London/NY sessions (default OFF)
+    killZoneOnly: KILL_ZONE_ONLY,           // only trade London/NY sessions (default OFF)
 
     htf4hSwingLookback: 5,
     htfSwingLookback: 3,
     ltfSwingLookback: 2,
-    htfFvgMaxAge: 50,              // 1H bars to scan back for HTF FVG
-    ltfFvgMaxAge: 30,              // 5m bars to scan back for LTF FVG
+    htfFvgMaxAge: HTF_FVG_MAX_AGE,              // 1H bars to scan back for HTF FVG
+    ltfFvgMaxAge: LTF_FVG_MAX_AGE,              // 5m bars to scan back for LTF FVG
     sweepWindow: 5,
     sweepLookbackBars: 25,         // how far back to scan for liquidity targets
     obLookback: 5,
     minInducementBars: 2,          // ignore very recent swings near entry zone
     displacementMinBody: 0.5,
     displacementMinVolMultiplier: 1.0,
-    slBufferPct: 0.002,            // 0.2% buffer beyond FVG edge for SL
-    minRR: 3,                      // higher bar = only high-conviction setups fire
-    tpCount: 2,                    // number of TP tiers
-    minFvgAge: 1,                  // FVG must be at least N bars old before triggering entry
+    slBufferPct: SL_BUFFER_PCT,            // 0.2% buffer beyond FVG edge for SL
+    minRR: MIN_RR,                      // higher bar = only high-conviction setups fire
+    tpCount: TP_COUNT,                    // number of TP tiers
+    minFvgAge: MIN_FVG_AGE,                  // FVG must be at least N bars old before triggering entry
 };
 
 export interface SMCSignal {

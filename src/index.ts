@@ -19,6 +19,20 @@ async function initBot() {
     console.log(`📊 [ATR] ATR period: ${process.env.ATR_PERIOD || '14'}, SL multiplier: ${process.env.ATR_MULTIPLIER_SL || '2'}`);
     console.log(`📊 [TRAIL] Trailing stop: ${process.env.TRAIL_PCT || '0.005'}% after TP1`);
     console.log(`📊 [MTF] Multi-timeframe FVG: ${process.env.REQUIRE_MTF_FVG === 'false' ? 'DISABLED' : 'ENABLED'}`);
+    console.log(`📊 [SMC] Structure bias: ${process.env.REQUIRE_STRUCTURE_BIAS === 'false' ? 'OFF' : 'ON'}`);
+    console.log(`📊 [SMC] 4H bias: ${process.env.REQUIRE_4H_BIAS === 'false' ? 'OFF' : 'ON'}`);
+    console.log(`📊 [SMC] Unmitigated: ${process.env.REQUIRE_UNMITIGATED === 'false' ? 'OFF' : 'ON'}`);
+    console.log(`📊 [SMC] Liquidity sweep: ${process.env.REQUIRE_LIQUIDITY_SWEEP === 'false' ? 'OFF' : 'ON'}`);
+    console.log(`📊 [SMC] Displacement: ${process.env.REQUIRE_DISPLACEMENT === 'false' ? 'OFF' : 'ON'}`);
+    console.log(`📊 [SMC] OB confluence: ${process.env.REQUIRE_OB_CONFLUENCE === 'true' ? 'ON' : 'OFF'}`);
+    console.log(`📊 [SMC] No inducement: ${process.env.REQUIRE_NO_INDUCEMENT === 'true' ? 'ON' : 'OFF'}`);
+    console.log(`📊 [SMC] Kill zone only: ${process.env.KILL_ZONE_ONLY === 'true' ? 'ON' : 'OFF'}`);
+    console.log(`📊 [SMC] Min RR: ${process.env.MIN_RR || '3'}`);
+    console.log(`📊 [SMC] TP count: ${process.env.TP_COUNT || '2'}`);
+    console.log(`📊 [SMC] SL buffer: ${process.env.SL_BUFFER_PCT || '0.002'}%`);
+    console.log(`📊 [SMC] Min FVG age: ${process.env.MIN_FVG_AGE || '1'} bars`);
+    console.log(`📊 [SMC] LTF FVG max age: ${process.env.LTF_FVG_MAX_AGE || '30'} bars`);
+    console.log(`📊 [SMC] HTF FVG max age: ${process.env.HTF_FVG_MAX_AGE || '50'} bars`);
     console.log("=========================================\n");
 
     // 0. Load persisted state + contract specs (parallel)
