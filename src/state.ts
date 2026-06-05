@@ -156,7 +156,7 @@ export class StateManager {
     public static isHalted(symbol: string, maxLossR: number): boolean {
         this.rolloverIfNeeded();
         const current = this.dailyLoss.realizedR[symbol] ?? 0;
-        return current <= -maxLossR;
+        return Math.abs(current) >= maxLossR && current < 0;
     }
 
     public static addPosition(pos: ActivePosition) {

@@ -209,14 +209,14 @@ export class ExecutionEngine {
     // ─── Dynamic position sizing based on ATR and equity ───────────────────
     // Calculates qty so that the dollar risk (entry - SL) equals
     // RISK_PER_TRADE_PCT % of current equity.
-    private static calculateDynamicQty(
+    private static calculateDynamicQty = (
         symbol: string,
         entryPrice: number,
         side: 'LONG' | 'SHORT',
         slPrice: number,
         equity: number
-    ): number | null {
-        const spec = this.specs.get(symbol);
+    ): number | null => {
+        const spec = ExecutionEngine.specs.get(symbol);
         if (!spec) return null;
 
         const slDistance = Math.abs(entryPrice - slPrice);
@@ -225,7 +225,7 @@ export class ExecutionEngine {
         const riskAmount = equity * (RISK_PER_TRADE_PCT / 100);
         const rawQty = riskAmount / slDistance;
 
-        const qtyStr = this.formatQty(rawQty, spec);
+        const qtyStr = ExecutionEngine.formatQty(rawQty, spec);
         if (qtyStr === null) return null;
 
         return parseFloat(qtyStr);
