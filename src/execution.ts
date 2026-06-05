@@ -508,7 +508,8 @@ export class ExecutionEngine {
                 tpHit: new Array(tpCount).fill(false),
                 slPlanId,
                 tpPlanIds,
-                breakevenMoved: false
+                breakevenMoved: false,
+                trailActivated: false
             });
             StateManager.recordTradeMarker('entry', side, 0);
         } finally {

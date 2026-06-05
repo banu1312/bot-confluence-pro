@@ -1,5 +1,5 @@
 import {
-    MarketData, SwingPoint, Bias,
+    MarketData, SwingPoint, Bias, FVG,
     findSwings, detectBias, findFVGs, isFVGUnmitigated, priceInZone,
     detectLiquiditySweep, findOrderBlock, zonesOverlap, hasDisplacementWithVolume,
     isKillZone, structuralTPLevels, hasInducement,
