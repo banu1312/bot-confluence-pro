@@ -2,9 +2,12 @@
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
-import { ScoringEngine } from './scoring';
 import { MarketData } from './smc';
 import { Screener } from './screener';
+import { getStrategyInstance } from './strategies/StrategyFactory';
+import { SmcStrategy, SMCSignal } from './strategies/SmcStrategy';
+import { RsiFiboStrategy } from './strategies/RsiFiboStrategy';
+import { BaseStrategy } from './strategies/BaseStrategy';
 
 interface Candle {
     ts: number; open: number; high: number; low: number; close: number; volume: number;
@@ -119,6 +122,37 @@ async function fetchCandles(symbol: string, granularity: string, count: number):
 
 const MS_PER_15MIN = 15 * 60 * 1000;
 const MS_PER_4HOUR = 4 * 60 * 60 * 1000;
+const RSI_PERIOD = 14;
+
+function calculateRSI(closes: number[], period: number): number {
+    if (closes.length < period + 1) return 50;
+    
+    const changes: number[] = [];
+    for (let i = 1; i < closes.length; i++) {
+        changes.push(closes[i] - closes[i - 1]);
+    }
+
+    let avgGain = 0;
+    let avgLoss = 0;
+    for (let i = 0; i < period; i++) {
+        if (changes[i] > 0) avgGain += changes[i];
+        else avgLoss += Math.abs(changes[i]);
+    }
+    avgGain /= period;
+    avgLoss /= period;
+
+    let rsi = 100 - (100 / (1 + avgGain / (avgLoss === 0 ? 0.001 : avgLoss)));
+
+    for (let i = period; i < changes.length; i++) {
+        const gain = changes[i] > 0 ? changes[i] : 0;
+        const loss = changes[i] < 0 ? Math.abs(changes[i]) : 0;
+        avgGain = (avgGain * (period - 1) + gain) / period;
+        avgLoss = (avgLoss * (period - 1) + loss) / period;
+        rsi = 100 - (100 / (1 + avgGain / (avgLoss === 0 ? 0.001 : avgLoss)));
+    }
+
+    return rsi;
+}
 
 // After TP1 is hit, trail SL to this fraction of the TP1 distance above/below entry.
 const TP1_TRAIL_FACTOR = 0.8;
@@ -256,9 +290,11 @@ async function runBacktest(symbol: string, days: number, verbose: boolean = true
         return [];
     }
 
-    ScoringEngine.resetStats();
+    const strategy = getStrategyInstance(symbol);
     const trades: Trade[] = [];
     let lastProgress = -1;
+
+    const isRsiFibo = strategy.name === 'rsi_fibo';
 
     for (let i = WINDOW_BARS; i < c5m.length; i++) {
         const progress = Math.floor(((i - WINDOW_BARS) / (c5m.length - WINDOW_BARS)) * 100);
@@ -270,38 +306,158 @@ async function runBacktest(symbol: string, days: number, verbose: boolean = true
         const data = buildMarketDataAt(c5m, c15m, c1h, c4h, i);
         if (!data) continue;
 
-        let signal = ScoringEngine.evaluateSMCMTF(symbol, data, '5m');
-        if (!signal) {
-            const ts5m = c5m[i].ts;
-            const is15mClose = c15m.some(c =>
-                c.ts + 15 * 60 * 1000 <= ts5m + 5 * 60 * 1000 &&
-                c.ts + 15 * 60 * 1000 > ts5m - 5 * 60 * 1000
-            );
-            if (is15mClose) signal = ScoringEngine.evaluateSMCMTF(symbol, data, '15m');
+        if (isRsiFibo) {
+            const current4hCandle = c4h.find(c => c.ts <= c5m[i].ts && c.ts + MS_PER_4HOUR > c5m[i].ts);
+            if (!current4hCandle) continue;
+
+            const prev4hCandle = c4h.find(c => c.ts < current4hCandle.ts && c.ts + MS_PER_4HOUR <= current4hCandle.ts);
+            if (!prev4hCandle) continue;
+
+            const is4hClose = c5m[i].ts >= current4hCandle.ts + MS_PER_4HOUR - 5 * 60 * 1000;
+            if (!is4hClose) continue;
+
+            const triggerContext = await (strategy as RsiFiboStrategy).checkHTFTrigger(symbol, {
+                open: current4hCandle.open,
+                high: current4hCandle.high,
+                low: current4hCandle.low,
+                close: current4hCandle.close,
+                ts: current4hCandle.ts
+            });
+
+            if (!triggerContext) continue;
+
+            const entryPrice = triggerContext.fibo786;
+            const side = triggerContext.side;
+            const slPrice = side === 'SHORT' ? entryPrice * 1.05 : entryPrice * 0.95;
+            
+            const future15m = c15m.filter(c => c.ts > current4hCandle.ts);
+            let fillIdx = -1;
+            for (let j = 0; j < future15m.length; j++) {
+                const isFill = side === 'SHORT' 
+                    ? future15m[j].high >= entryPrice 
+                    : future15m[j].low <= entryPrice;
+                if (isFill) {
+                    fillIdx = j;
+                    break;
+                }
+            }
+
+            if (fillIdx === -1) continue;
+
+            const fillCandle = future15m[fillIdx];
+            const future4h = c4h.filter(c => c.ts > fillCandle.ts);
+            
+            let exitPrice = 0;
+            let exitReason: EndReason = 'OPEN';
+            let exitIdx = -1;
+
+            for (let j = fillIdx; j < future15m.length; j++) {
+                const close15m = future15m[j].close;
+                const isBreakout = side === 'SHORT' 
+                    ? close15m > entryPrice 
+                    : close15m < entryPrice;
+                
+                if (isBreakout) {
+                    exitPrice = close15m;
+                    exitReason = 'TP1_BE_STOP';
+                    exitIdx = j;
+                    break;
+                }
+
+                const slHit = side === 'SHORT'
+                    ? future15m[j].high >= slPrice
+                    : future15m[j].low <= slPrice;
+                
+                if (slHit) {
+                    exitPrice = slPrice;
+                    exitReason = 'SL';
+                    exitIdx = j;
+                    break;
+                }
+
+                const current4hAfterFill = future4h.find(c => c.ts <= future15m[j].ts && c.ts + MS_PER_4HOUR > future15m[j].ts);
+                if (current4hAfterFill && future15m[j].ts >= current4hAfterFill.ts + MS_PER_4HOUR - 5 * 60 * 1000) {
+                    const rsiCloses = c4h
+                        .filter(c => c.ts <= current4hAfterFill.ts)
+                        .slice(-RSI_PERIOD)
+                        .map(c => c.close);
+                    
+                    if (rsiCloses.length >= RSI_PERIOD) {
+                        const rsi = calculateRSI(rsiCloses, RSI_PERIOD);
+                        const tpCondition = side === 'SHORT' 
+                            ? rsi < 30 
+                            : rsi > 70;
+                        
+                        if (tpCondition) {
+                            exitPrice = future15m[j].close;
+                            exitReason = 'TP_FULL';
+                            exitIdx = j;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (exitIdx === -1) {
+                exitPrice = future15m[future15m.length - 1].close;
+                exitReason = 'TP1_BE_HOLD';
+            }
+
+            const finalR = side === 'SHORT'
+                ? (entryPrice - exitPrice) / (exitPrice - slPrice)
+                : (exitPrice - entryPrice) / (entryPrice - slPrice);
+
+            trades.push({
+                symbol,
+                entryTs: fillCandle.ts,
+                exitTs: exitIdx >= 0 ? future15m[exitIdx].ts : null,
+                side,
+                entryPrice,
+                slPrice,
+                tpLevels: [exitPrice],
+                tpHit: [exitReason === 'TP_FULL'],
+                breakevenMoved: false,
+                finalR,
+                barsHeld: exitIdx >= 0 ? exitIdx + 1 : future15m.length,
+                endReason: exitReason,
+                confluence: [`RSI=${triggerContext.rsiAtTrigger.toFixed(2)}`, `FIBO=0.786`]
+            });
+
+        } else {
+            const smcStrategy = strategy as SmcStrategy;
+            let signal = smcStrategy.evaluateSMCMTF(symbol, data, '5m');
+            if (!signal) {
+                const ts5m = c5m[i].ts;
+                const is15mClose = c15m.some(c =>
+                    c.ts + 15 * 60 * 1000 <= ts5m + 5 * 60 * 1000 &&
+                    c.ts + 15 * 60 * 1000 > ts5m - 5 * 60 * 1000
+                );
+                if (is15mClose) signal = smcStrategy.evaluateSMCMTF(symbol, data, '15m');
+            }
+            if (!signal) continue;
+
+            const future = c5m.slice(i + 1);
+            const sim = simulateMultiTPTrade(signal.side, signal.entryPrice, signal.slPrice, signal.tpLevels, future);
+
+            trades.push({
+                symbol,
+                entryTs: c5m[i].ts,
+                exitTs: sim.exitIdx >= 0 ? future[sim.exitIdx].ts : null,
+                side: signal.side,
+                entryPrice: signal.entryPrice,
+                slPrice: signal.slPrice,
+                tpLevels: signal.tpLevels,
+                tpHit: sim.tpHit,
+                breakevenMoved: sim.breakevenMoved,
+                finalR: sim.finalR,
+                barsHeld: sim.exitIdx >= 0 ? sim.exitIdx + 1 : c5m.length - i - 1,
+                endReason: sim.endReason,
+                confluence: [`[${signal.ltfTimeframe}]`, ...signal.confluence]
+            });
+
+            if (sim.exitIdx >= 0) i += sim.exitIdx + 1;
+            else i = c5m.length;
         }
-        if (!signal) continue;
-
-        const future = c5m.slice(i + 1);
-        const sim = simulateMultiTPTrade(signal.side, signal.entryPrice, signal.slPrice, signal.tpLevels, future);
-
-        trades.push({
-            symbol,
-            entryTs: c5m[i].ts,
-            exitTs: sim.exitIdx >= 0 ? future[sim.exitIdx].ts : null,
-            side: signal.side,
-            entryPrice: signal.entryPrice,
-            slPrice: signal.slPrice,
-            tpLevels: signal.tpLevels,
-            tpHit: sim.tpHit,
-            breakevenMoved: sim.breakevenMoved,
-            finalR: sim.finalR,
-            barsHeld: sim.exitIdx >= 0 ? sim.exitIdx + 1 : c5m.length - i - 1,
-            endReason: sim.endReason,
-            confluence: [`[${signal.ltfTimeframe}]`, ...signal.confluence]
-        });
-
-        if (sim.exitIdx >= 0) i += sim.exitIdx + 1;
-        else i = c5m.length;
     }
 
     process.stdout.write('                    \r');

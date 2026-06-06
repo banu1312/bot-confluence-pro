@@ -1,0 +1,6 @@
+{
+  "default_strategy": "rsi_fibo",
+  "coin_overrides": {
+    "BTCUSDT": "smc"
+  }
+}

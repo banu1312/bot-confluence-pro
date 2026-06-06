@@ -1,7 +1,9 @@
 import WebSocket from 'ws';
-import { ScoringEngine } from './scoring';
 import { ExecutionEngine } from './execution';
 import { findSwings, detectBias, findFVGs, isFVGUnmitigated, hasDisplacement, priceInZone } from './smc';
+import { getStrategyInstance } from './strategies/StrategyFactory';
+import { SmcStrategy } from './strategies/SmcStrategy';
+import { RsiFiboStrategy } from './strategies/RsiFiboStrategy';
 
 export let marketData: Record<string, any> = {};
 
@@ -301,12 +303,55 @@ function connect() {
 
         if (m[`lastTs${dataKey}`] !== ts) {
             if (m[`lastTs${dataKey}`] !== '') {
-                if (dataKey === '5m') {
-                    const signal = ScoringEngine.evaluateSMCMTF(symbol, m, '5m');
-                    if (signal) await ExecutionEngine.openPositionSMC(signal);
-                } else if (dataKey === '15m') {
-                    const signal = ScoringEngine.evaluateSMCMTF(symbol, m, '15m');
-                    if (signal) await ExecutionEngine.openPositionSMC(signal);
+                const strategy = getStrategyInstance(symbol);
+                
+                if (strategy.name === 'smc') {
+                    const smcStrategy = strategy as SmcStrategy;
+                    if (dataKey === '5m') {
+                        const signal = smcStrategy.evaluateSMCMTF(symbol, m, '5m');
+                        if (signal) await ExecutionEngine.openPositionSMC(signal);
+                    } else if (dataKey === '15m') {
+                        const signal = smcStrategy.evaluateSMCMTF(symbol, m, '15m');
+                        if (signal) await ExecutionEngine.openPositionSMC(signal);
+                    }
+                } else if (strategy.name === 'rsi_fibo') {
+                    const rsiFiboStrategy = strategy as RsiFiboStrategy;
+                    if (dataKey === '4h') {
+                        const candle4h = {
+                            open: m.opens4h[m.opens4h.length - 1],
+                            high: m.highs4h[m.highs4h.length - 1],
+                            low: m.lows4h[m.lows4h.length - 1],
+                            close: m.closes4h[m.closes4h.length - 1],
+                            ts: parseInt(m.lastTs4h, 10)
+                        };
+                        const triggerContext = await rsiFiboStrategy.checkHTFTrigger(symbol, candle4h);
+                        if (triggerContext) {
+                            m._rsiFiboTrigger = triggerContext;
+                        }
+                    } else if (dataKey === '15m' && m._rsiFiboTrigger) {
+                        const candle15m = {
+                            open: m.opens15m[m.opens15m.length - 1],
+                            high: m.highs15m[m.highs15m.length - 1],
+                            low: m.lows15m[m.lows15m.length - 1],
+                            close: m.closes15m[m.closes15m.length - 1],
+                            ts: parseInt(m.lastTs15m, 10)
+                        };
+                        const entryResult = await rsiFiboStrategy.checkLTFEntry(symbol, m._rsiFiboTrigger, candle15m);
+                        if (entryResult && entryResult.action === 'filled') {
+                            const signal = {
+                                symbol,
+                                side: entryResult.context.side,
+                                entryPrice: entryResult.context.entryPrice,
+                                slPrice: entryResult.context.slPrice,
+                                tpLevels: [],
+                                tpPrice: 0,
+                                confluence: ['RSI-FIBO'],
+                                ltfTimeframe: '15m' as const,
+                                data: m
+                            };
+                            await ExecutionEngine.openPositionSMC(signal);
+                        }
+                    }
                 }
             }
             m[`opens${dataKey}`].push(open);
