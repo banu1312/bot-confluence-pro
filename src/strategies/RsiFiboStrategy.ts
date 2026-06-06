@@ -33,6 +33,8 @@ interface RsiFiboContext {
 export class RsiFiboStrategy implements BaseStrategy {
     name = 'rsi_fibo';
     private activeContexts: Map<string, RsiFiboContext> = new Map();
+    // Track active positions per symbol (max 1)
+    private activePositions: Set<string> = new Set();
 
     async scanDailyWatchlist(): Promise<string[]> {
         try {
@@ -84,6 +86,11 @@ export class RsiFiboStrategy implements BaseStrategy {
     }
 
     async checkHTFTrigger(symbol: string, candle4h: any): Promise<any> {
+        // If there is already an active position for this symbol, do NOT generate new trigger
+        if (this.activePositions.has(symbol)) {
+            return null;
+        }
+
         try {
             const res = await axios.get(
                 `${BASE_URL}/api/v2/mix/market/candles?symbol=${symbol}&granularity=4H&productType=USDT-FUTURES&limit=${RSI_PERIOD + 5}`
@@ -146,6 +153,11 @@ export class RsiFiboStrategy implements BaseStrategy {
     }
 
     async checkLTFEntry(symbol: string, triggerContext: any, candle15m: any): Promise<any> {
+        // PROTEKSI OVERLAPPING: jika sudah ada posisi aktif, jangan buka baru
+        if (this.activePositions.has(symbol)) {
+            return null;
+        }
+
         const existing = this.activeContexts.get(symbol);
         if (existing && existing.orderPlaced) {
             return this.monitorOrder(symbol, candle15m);
@@ -193,7 +205,11 @@ export class RsiFiboStrategy implements BaseStrategy {
         const context = this.activeContexts.get(position.symbol);
         if (!context) return null;
 
-        if (context.filled && !context.earlyCutTriggered) {
+        // Only handle filled positions
+        if (!context.filled) return null;
+
+        // 1. Early Cut: 15M close breaks fibo 0.786
+        if (!context.earlyCutTriggered) {
             const close15m = candle15m?.close || currentPrice;
             const isBreakout = context.side === 'SHORT' 
                 ? close15m > context.fibo786 
@@ -202,11 +218,26 @@ export class RsiFiboStrategy implements BaseStrategy {
             if (isBreakout) {
                 console.log(`⚠️ [RSI-FIBO] ${position.symbol} early cut: 15M close ${close15m.toFixed(4)} broke fibo ${context.fibo786.toFixed(4)}`);
                 context.earlyCutTriggered = true;
+                this.activePositions.delete(position.symbol);
+                this.activeContexts.delete(position.symbol);
                 return { action: 'close', reason: 'EARLY_CUT' };
             }
         }
 
-        if (context.filled && !context.tpTriggered) {
+        // 2. Hard SL (5%)
+        const slHit = context.side === 'SHORT'
+            ? currentPrice >= context.slPrice
+            : currentPrice <= context.slPrice;
+        
+        if (slHit) {
+            console.log(`🛑 [RSI-FIBO] ${position.symbol} hard SL hit @ ${currentPrice.toFixed(4)}`);
+            this.activePositions.delete(position.symbol);
+            this.activeContexts.delete(position.symbol);
+            return { action: 'close', reason: 'HARD_SL' };
+        }
+
+        // 3. TP: RSI 4H reaches opposite extreme
+        if (!context.tpTriggered) {
             const rsi4h = await this.getCurrentRSI(position.symbol);
             if (rsi4h !== null) {
                 const tpCondition = context.side === 'SHORT' 
@@ -216,19 +247,10 @@ export class RsiFiboStrategy implements BaseStrategy {
                 if (tpCondition) {
                     console.log(`🎯 [RSI-FIBO] ${position.symbol} TP triggered: RSI=${rsi4h.toFixed(2)}`);
                     context.tpTriggered = true;
+                    this.activePositions.delete(position.symbol);
+                    this.activeContexts.delete(position.symbol);
                     return { action: 'close', reason: 'TP_RSI' };
                 }
-            }
-        }
-
-        if (context.filled) {
-            const slHit = context.side === 'SHORT'
-                ? currentPrice >= context.slPrice
-                : currentPrice <= context.slPrice;
-            
-            if (slHit) {
-                console.log(`🛑 [RSI-FIBO] ${position.symbol} hard SL hit @ ${currentPrice.toFixed(4)}`);
-                return { action: 'close', reason: 'HARD_SL' };
             }
         }
 
@@ -249,6 +271,8 @@ export class RsiFiboStrategy implements BaseStrategy {
                 context.filled = true;
                 context.fillPrice = context.entryPrice;
                 context.fillTime = Date.now();
+                // Mark position as active
+                this.activePositions.add(symbol);
                 console.log(`✅ [RSI-FIBO] ${symbol} ${context.side} order filled @ ${context.entryPrice.toFixed(4)}`);
                 return { action: 'filled', context };
             }

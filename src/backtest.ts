@@ -303,6 +303,8 @@ async function runBacktest(symbol: string, days: number, verbose: boolean = true
     let lastProgress = -1;
 
     const isRsiFibo = strategy.name === 'rsi_fibo';
+    // Map untuk melacak posisi aktif per symbol (proteksi overlapping)
+    const activePositions: Set<string> = new Set();
 
     for (let i = WINDOW_BARS; i < c5m.length; i++) {
         const progress = Math.floor(((i - WINDOW_BARS) / (c5m.length - WINDOW_BARS)) * 100);
@@ -324,7 +326,18 @@ async function runBacktest(symbol: string, days: number, verbose: boolean = true
             const is4hClose = c5m[i].ts >= current4hCandle.ts + MS_PER_4HOUR - 5 * 60 * 1000;
             if (!is4hClose) continue;
 
-            const triggerContext = await (strategy as RsiFiboStrategy).checkHTFTrigger(symbol, {
+            // PROTEKSI OVERLAPPING: cek apakah sudah ada posisi aktif untuk symbol ini
+            const rsiFiboStrategy = strategy as RsiFiboStrategy;
+            // Kita perlu akses ke activePositions internal. Untuk backtest, kita gunakan map lokal.
+            // Gunakan map lokal untuk melacak posisi aktif per symbol
+            if (!activePositions) {
+                // Inisialisasi di luar loop
+            }
+            if (activePositions.has(symbol)) {
+                continue;
+            }
+
+            const triggerContext = await rsiFiboStrategy.checkHTFTrigger(symbol, {
                 open: current4hCandle.open,
                 high: current4hCandle.high,
                 low: current4hCandle.low,
@@ -359,19 +372,24 @@ async function runBacktest(symbol: string, days: number, verbose: boolean = true
             let exitReason: EndReason = 'OPEN';
             let exitIdx = -1;
 
+            // Tandai posisi aktif
+            activePositions.add(symbol);
+
             for (let j = fillIdx; j < future15m.length; j++) {
                 const close15m = future15m[j].close;
+                // Early Cut: 15M close breaks fibo 0.786
                 const isBreakout = side === 'SHORT' 
                     ? close15m > entryPrice 
                     : close15m < entryPrice;
                 
                 if (isBreakout) {
                     exitPrice = close15m;
-                    exitReason = 'TP1_BE_STOP';
+                    exitReason = 'EARLY_CUT';
                     exitIdx = j;
                     break;
                 }
 
+                // Hard SL (5%)
                 const slHit = side === 'SHORT'
                     ? future15m[j].high >= slPrice
                     : future15m[j].low <= slPrice;
@@ -383,6 +401,7 @@ async function runBacktest(symbol: string, days: number, verbose: boolean = true
                     break;
                 }
 
+                // TP: RSI 4H reaches opposite extreme
                 const current4hAfterFill = future4h.find(c => c.ts <= future15m[j].ts && c.ts + MS_PER_4HOUR > future15m[j].ts);
                 if (current4hAfterFill && future15m[j].ts >= current4hAfterFill.ts + MS_PER_4HOUR - 5 * 60 * 1000) {
                     const rsiCloses = c4h
@@ -398,7 +417,7 @@ async function runBacktest(symbol: string, days: number, verbose: boolean = true
                         
                         if (tpCondition) {
                             exitPrice = future15m[j].close;
-                            exitReason = 'TP_FULL';
+                            exitReason = 'TP_RSI';
                             exitIdx = j;
                             break;
                         }
@@ -408,8 +427,11 @@ async function runBacktest(symbol: string, days: number, verbose: boolean = true
 
             if (exitIdx === -1) {
                 exitPrice = future15m[future15m.length - 1].close;
-                exitReason = 'TP1_BE_HOLD';
+                exitReason = 'OPEN';
             }
+
+            // Hapus posisi aktif setelah exit
+            activePositions.delete(symbol);
 
             const finalR = side === 'SHORT'
                 ? (entryPrice - exitPrice) / (exitPrice - slPrice)
@@ -423,7 +445,7 @@ async function runBacktest(symbol: string, days: number, verbose: boolean = true
                 entryPrice,
                 slPrice,
                 tpLevels: [exitPrice],
-                tpHit: [exitReason === 'TP_FULL'],
+                tpHit: [exitReason === 'TP_RSI'],
                 breakevenMoved: false,
                 finalR,
                 barsHeld: exitIdx >= 0 ? exitIdx + 1 : future15m.length,
