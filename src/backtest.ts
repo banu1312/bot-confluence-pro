@@ -1,5 +1,7 @@
 /// <reference types="node" />
 import axios from 'axios';
+import * as fs from 'fs';
+import * as path from 'path';
 import { ScoringEngine } from './scoring';
 import { MarketData } from './smc';
 import { Screener } from './screener';
@@ -624,6 +626,42 @@ function printCombinedReport(allTrades: Trade[], days: number): void {
     console.log(`${'═'.repeat(68)}`);
 }
 
+// ─── Fungsi untuk menyimpan log ke file ────────────────────────────────────
+function saveLogToFile(logContent: string, symbol: string, days: number): void {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const safeSymbol = symbol.replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `backtest_${safeSymbol}_${days}d_${timestamp}.log`;
+    const filepath = path.join(__dirname, '..', 'logs', filename);
+    
+    // Buat direktori logs jika belum ada
+    const dir = path.dirname(filepath);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    
+    fs.writeFileSync(filepath, logContent, 'utf-8');
+    console.log(`\n📝 [LOG] Saved to ${filepath}`);
+}
+
+// ─── Fungsi untuk menyimpan combined log ke file ───────────────────────────
+function saveCombinedLogToFile(logContent: string, symbols: string[], days: number): void {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const safeSymbols = symbols.length <= 3 
+        ? symbols.map(s => s.replace(/[^a-zA-Z0-9]/g, '_')).join('_')
+        : `${symbols.length}coins`;
+    const filename = `backtest_${safeSymbols}_${days}d_${timestamp}.log`;
+    const filepath = path.join(__dirname, '..', 'logs', filename);
+    
+    // Buat direktori logs jika belum ada
+    const dir = path.dirname(filepath);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    
+    fs.writeFileSync(filepath, logContent, 'utf-8');
+    console.log(`\n📝 [LOG] Combined report saved to ${filepath}`);
+}
+
 async function main() {
     const args = process.argv.slice(2);
     let symbols: string[] = [];
@@ -676,16 +714,70 @@ async function main() {
     }
 
     const allTrades: Trade[] = [];
+    const startTime = Date.now();
+    const logLines: string[] = [];
+
     for (let idx = 0; idx < symbols.length; idx++) {
+        const coinStartTime = Date.now();
+        console.log(`\n${'='.repeat(60)}`);
+        console.log(`📊 [${idx + 1}/${symbols.length}] Processing ${symbols[idx]}...`);
+        console.log(`${'='.repeat(60)}`);
+
         if (idx > 0) {
             console.log(`\n⏸  ${COIN_PAUSE_MS / 1000}s pause...`);
             await sleep(COIN_PAUSE_MS);
         }
         const trades = await runBacktest(symbols[idx], days, !isBatch);
         allTrades.push(...trades);
+
+        const coinElapsed = (Date.now() - coinStartTime) / 1000;
+        const totalElapsed = (Date.now() - startTime) / 1000;
+        const avgPerCoin = totalElapsed / (idx + 1);
+        const remaining = symbols.length - idx - 1;
+        const eta = avgPerCoin * remaining;
+        console.log(`   ⏱  ${symbols[idx]} took ${coinElapsed.toFixed(1)}s | Total elapsed: ${(totalElapsed / 60).toFixed(1)}m | ETA: ${(eta / 60).toFixed(1)}m`);
     }
 
-    if (isBatch) printCombinedReport(allTrades, days);
+    const totalElapsed = (Date.now() - startTime) / 1000;
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`🏁 BACKTEST COMPLETE in ${(totalElapsed / 60).toFixed(1)} minutes`);
+    console.log(`${'='.repeat(60)}`);
+
+    if (isBatch) {
+        // Capture combined report output
+        const combinedReportLines: string[] = [];
+        const originalLog = console.log;
+        console.log = (...args: any[]) => {
+            const line = args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' ');
+            combinedReportLines.push(line);
+            originalLog(...args);
+        };
+        
+        printCombinedReport(allTrades, days);
+        
+        // Restore console.log
+        console.log = originalLog;
+        
+        // Save combined report to file
+        saveCombinedLogToFile(combinedReportLines.join('\n'), symbols, days);
+    } else {
+        // For single coin, save individual report
+        const reportLines: string[] = [];
+        const originalLog = console.log;
+        console.log = (...args: any[]) => {
+            const line = args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' ');
+            reportLines.push(line);
+            originalLog(...args);
+        };
+        
+        printReport(symbols[0], days, allTrades, true);
+        
+        // Restore console.log
+        console.log = originalLog;
+        
+        // Save individual report to file
+        saveLogToFile(reportLines.join('\n'), symbols[0], days);
+    }
 }
 
 main().catch(e => {
