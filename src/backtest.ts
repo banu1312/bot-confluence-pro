@@ -651,7 +651,8 @@ function calculateUlcerIndex(trades: Trade[]): number {
 
 function printReport(symbol: string, days: number, trades: Trade[], detailed: boolean = true): void {
     const counts: Record<EndReason, number> = {
-        'TP_FULL': 0, 'TP1_BE_HOLD': 0, 'TP1_BE_STOP': 0, 'SL': 0, 'OPEN': 0
+        'TP_FULL': 0, 'TP1_BE_HOLD': 0, 'TP1_BE_STOP': 0, 'SL': 0, 'OPEN': 0,
+        'EARLY_CUT': 0, 'TP_RSI': 0
     };
     for (const t of trades) counts[t.endReason]++;
 
