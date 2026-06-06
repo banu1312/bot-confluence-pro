@@ -32,6 +32,69 @@ const PONG_TIMEOUT_MS = parseInt(process.env.WS_PONG_TIMEOUT_MS || '60000', 10);
 
 // --- Caching Engine untuk Dashboard ---
 type PlanStatus = 'READY' | 'WAITING' | 'INVALIDATED';
+
+// ─── Fungsi untuk mendeteksi BOS di LTF ────────────────────────────────────
+function detectBOS(
+    highs: number[],
+    lows: number[],
+    side: 'LONG' | 'SHORT',
+    lookback: number = 5
+): boolean {
+    if (highs.length < lookback + 2) return false;
+
+    const recentHighs = highs.slice(-lookback);
+    const recentLows = lows.slice(-lookback);
+
+    if (side === 'LONG') {
+        // BOS bullish: harga menembus swing high terakhir
+        const prevHigh = Math.max(...recentHighs.slice(0, -1));
+        const currentHigh = recentHighs[recentHighs.length - 1];
+        return currentHigh > prevHigh;
+    } else {
+        // BOS bearish: harga menembus swing low terakhir
+        const prevLow = Math.min(...recentLows.slice(0, -1));
+        const currentLow = recentLows[recentLows.length - 1];
+        return currentLow < prevLow;
+    }
+}
+
+// ─── Fungsi untuk menggeser SL ke Breakeven ────────────────────────────────
+function moveSLToBreakeven(symbol: string, entryPrice: number) {
+    const pos = StateManager.find(symbol);
+    if (!pos) return;
+
+    // Hanya geser jika belum pernah di-breakeven
+    if (pos.breakevenMoved) return;
+
+    // Geser SL ke entry price
+    pos.slPrice = entryPrice;
+    pos.breakevenMoved = true;
+
+    // Update di state manager
+    StateManager.updateAfterTp1(symbol, entryPrice, null, pos.qty);
+    console.log(`🔒 [BE] ${symbol}: SL moved to breakeven (${entryPrice})`);
+}
+
+// ─── Fungsi monitoring posisi aktif ────────────────────────────────────────
+function monitorActivePositions() {
+    for (const pos of StateManager.positions) {
+        const data = marketData[pos.symbol];
+        if (!data) continue;
+
+        const ltfHighs = data.highs5m;
+        const ltfLows = data.lows5m;
+        const ltfCloses = data.closes5m;
+
+        if (ltfHighs.length < 10) continue;
+
+        // Deteksi BOS di LTF
+        const bosDetected = detectBOS(ltfHighs, ltfLows, pos.side, 5);
+
+        if (bosDetected && !pos.breakevenMoved) {
+            moveSLToBreakeven(pos.symbol, pos.entryPrice);
+        }
+    }
+}
 const PLAN_STALENESS_PCT = 0.02;
 const PLAN_MIN_RR = 3; // Menyesuaikan SMC_CONFIG.minRR lu yaitu 3
 const PLAN_DISP_BODY = 0.5;
@@ -161,6 +224,9 @@ function connect() {
         pingInterval = setInterval(() => {
             if (ws?.readyState === WebSocket.OPEN) ws.send('ping');
         }, PING_MS);
+
+        // Monitoring posisi aktif setiap 5 detik
+        setInterval(monitorActivePositions, 5000);
 
         // Start health check interval
         if (healthCheckInterval) clearInterval(healthCheckInterval);

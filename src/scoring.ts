@@ -1,9 +1,9 @@
 import {
     MarketData, SwingPoint, Bias, FVG,
     findSwings, detectBias, findFVGs, isFVGUnmitigated, priceInZone,
-    detectLiquiditySweep, findOrderBlock, zonesOverlap, hasDisplacementWithVolume,
-    isKillZone, structuralTPLevels, hasInducement,
-    findMultiTimeframeFVG
+    detectLiquiditySweep, findOrderBlock, findOrderBlockWithATR, zonesOverlap,
+    hasDisplacementWithVolume, isKillZone, structuralTPLevels, hasInducement,
+    findMultiTimeframeFVG, findMultiTimeframeFVG_TopDown, calculateATR
 } from './smc';
 
 // Tunable confluence requirements. Toggle individual gates without recompiling logic.
@@ -17,7 +17,7 @@ const REQUIRE_UNMITIGATED = process.env.REQUIRE_UNMITIGATED !== 'false';
 const REQUIRE_LIQUIDITY_SWEEP = process.env.REQUIRE_LIQUIDITY_SWEEP !== 'false';
 const REQUIRE_DISPLACEMENT = process.env.REQUIRE_DISPLACEMENT !== 'false';
 const REQUIRE_OB_CONFLUENCE = process.env.REQUIRE_OB_CONFLUENCE === 'true';
-const REQUIRE_NO_INDUCEMENT = process.env.REQUIRE_NO_INDUCEMENT === 'true';
+const REQUIRE_NO_INDUCEMENT = true; // Hard filter
 const KILL_ZONE_ONLY = process.env.KILL_ZONE_ONLY === 'true';
 const MIN_RR = parseFloat(process.env.MIN_RR || '3');
 const TP_COUNT = parseInt(process.env.TP_COUNT || '2', 10);
@@ -175,10 +175,10 @@ export class ScoringEngine {
         let ltfFvg: FVG | null = null;
 
         if (SMC_CONFIG.requireMultiTimeframeFVG) {
-            // Use multi-timeframe FVG detection
-            ltfFvg = findMultiTimeframeFVG(
+            // Gunakan Top-Down MTF
+            ltfFvg = findMultiTimeframeFVG_TopDown(
                 ltfHighs, ltfLows, ltfCloses,
-                data.highs1h, data.lows1h, data.closes1h,
+                data.highs1h, data.lows1h, data.closes1h, data.opens1h,
                 fvgSide, currentPrice,
                 SMC_CONFIG.ltfFvgMaxAge,
                 SMC_CONFIG.htfFvgMaxAge,
@@ -215,11 +215,15 @@ export class ScoringEngine {
             confluence.push('DISPLACEMENT_VOL');
         }
 
-        // Gate 6: Order Block confluence with LTF FVG
+        // Gate 6: Order Block confluence with LTF FVG (dengan ATR buffer)
         if (SMC_CONFIG.requireOBConfluence) {
-            const ob = findOrderBlock(
-                data.opens5m, data.closes5m, data.highs5m, data.lows5m,
-                ltfFvg.index, fvgSide, SMC_CONFIG.obLookback
+            // Hitung ATR untuk LTF
+            const atr = calculateATR(ltfHighs, ltfLows, ltfCloses, 14);
+            if (atr === 0) return ScoringEngine.reject('NO_ATR');
+
+            const ob = findOrderBlockWithATR(
+                ltfOpens, ltfCloses, ltfHighs, ltfLows,
+                ltfFvg.index, fvgSide, atr, 0.5, SMC_CONFIG.obLookback
             );
             if (!ob || !zonesOverlap(ob, ltfFvg)) return ScoringEngine.reject('NO_OB');
             confluence.push('OB');

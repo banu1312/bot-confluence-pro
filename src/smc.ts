@@ -185,6 +185,31 @@ export function findOrderBlock(
     return null;
 }
 
+// ─── 7b. Order Block with ATR Buffer ──────────────────────────────────────
+export function findOrderBlockWithATR(
+    opens: number[], closes: number[], highs: number[], lows: number[],
+    fvgIdx: number,
+    side: 'BULLISH' | 'BEARISH',
+    atr: number,
+    atrMultiplier: number = 0.5,
+    maxLookback: number = 5
+): Zone | null {
+    for (let i = fvgIdx - 1; i >= Math.max(0, fvgIdx - maxLookback); i--) {
+        const isBearish = closes[i] < opens[i];
+        if (side === 'BULLISH' && isBearish) {
+            // SL untuk LONG: OB_Low - (0.5 * ATR)
+            const slPrice = lows[i] - (atrMultiplier * atr);
+            return { top: highs[i], bottom: slPrice };
+        }
+        if (side === 'BEARISH' && !isBearish) {
+            // SL untuk SHORT: OB_High + (0.5 * ATR)
+            const slPrice = highs[i] + (atrMultiplier * atr);
+            return { top: slPrice, bottom: lows[i] };
+        }
+    }
+    return null;
+}
+
 // ─── 8. Zone overlap (for OB+FVG confluence check) ──────────────────────────
 export function zonesOverlap(a: Zone, b: Zone): boolean {
     return !(a.top < b.bottom || a.bottom > b.top);
@@ -358,6 +383,100 @@ export function findMultiTimeframeFVG(
     if (overlapping.length === 0) return null;
 
     // 4. Return the one closest to currentPrice
+    overlapping.sort((a, b) => {
+        const midA = (a.top + a.bottom) / 2;
+        const midB = (b.top + b.bottom) / 2;
+        return Math.abs(midA - currentPrice) - Math.abs(midB - currentPrice);
+    });
+
+    return overlapping[0];
+}
+
+// ─── 15. HTF POI detection (Top-Down) ─────────────────────────────────────
+// Mencari POI di HTF (1h/4h) terlebih dahulu.
+// Mengembalikan zona HTF yang valid (Order Block atau FVG).
+export function findHTFPOI(
+    htfHighs: number[],
+    htfLows: number[],
+    htfCloses: number[],
+    htfOpens: number[],
+    side: 'BULLISH' | 'BEARISH',
+    maxAge: number = 50,
+    requireUnmitigated: boolean = true
+): Zone | null {
+    // 1. Cari FVG di HTF
+    const htfFvgs = findFVGs(htfHighs, htfLows, side, maxAge);
+    const validHtfFvgs = requireUnmitigated
+        ? htfFvgs.filter(f => isFVGUnmitigated(f, htfCloses))
+        : htfFvgs;
+
+    // 2. Cari Order Block dari FVG HTF
+    for (const fvg of validHtfFvgs) {
+        const ob = findOrderBlock(htfOpens, htfCloses, htfHighs, htfLows, fvg.index, side, 5);
+        if (ob) {
+            // Validasi OB dengan displacement
+            const obIdx = fvg.index - 1;
+            if (obIdx >= 0) {
+                const hasDisp = hasDisplacement(
+                    htfOpens[obIdx], htfCloses[obIdx],
+                    htfHighs[obIdx], htfLows[obIdx],
+                    side, 0.5
+                );
+                if (hasDisp) return ob;
+            }
+        }
+    }
+
+    // 3. Jika tidak ada OB, gunakan FVG sebagai POI
+    if (validHtfFvgs.length > 0) {
+        const nearest = validHtfFvgs.reduce((a, b) =>
+            Math.abs(a.top - a.bottom) < Math.abs(b.top - b.bottom) ? a : b
+        );
+        return { top: nearest.top, bottom: nearest.bottom };
+    }
+
+    return null;
+}
+
+// ─── 16. Modified findMultiTimeframeFVG (Top-Down) ─────────────────────────
+// Hanya mencari LTF FVG jika harga sudah masuk ke zona HTF POI.
+export function findMultiTimeframeFVG_TopDown(
+    ltfHighs: number[],
+    ltfLows: number[],
+    ltfCloses: number[],
+    htfHighs: number[],
+    htfLows: number[],
+    htfCloses: number[],
+    htfOpens: number[],
+    side: 'BULLISH' | 'BEARISH',
+    currentPrice: number,
+    ltfMaxAge: number = 30,
+    htfMaxAge: number = 50,
+    requireUnmitigated: boolean = true
+): FVG | null {
+    // 1. Cari POI di HTF
+    const htfPOI = findHTFPOI(htfHighs, htfLows, htfCloses, htfOpens, side, htfMaxAge, requireUnmitigated);
+    if (!htfPOI) return null;
+
+    // 2. Cek apakah harga sudah masuk ke zona HTF POI
+    if (!priceInZone(currentPrice, htfPOI)) return null;
+
+    // 3. Cari LTF FVG yang overlap dengan HTF POI
+    const ltfFvgs = findFVGs(ltfHighs, ltfLows, side, ltfMaxAge);
+    const validLtfFvgs = requireUnmitigated
+        ? ltfFvgs.filter(f => isFVGUnmitigated(f, ltfCloses))
+        : ltfFvgs;
+
+    const overlapping: FVG[] = [];
+    for (const ltfFvg of validLtfFvgs) {
+        if (zonesOverlap(ltfFvg, htfPOI)) {
+            overlapping.push(ltfFvg);
+        }
+    }
+
+    if (overlapping.length === 0) return null;
+
+    // 4. Kembalikan LTF FVG terdekat dengan harga saat ini
     overlapping.sort((a, b) => {
         const midA = (a.top + a.bottom) / 2;
         const midB = (b.top + b.bottom) / 2;
