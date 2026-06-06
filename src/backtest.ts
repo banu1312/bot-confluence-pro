@@ -832,35 +832,44 @@ async function main() {
     let symbols: string[] = [];
     let days = 1095; // Default: 3 years
 
-    if (args.includes('--preset=15')) {
+    // Helper: cari argumen angka (jumlah hari) di antara argumen non-flag
+    function extractDaysArg(args: string[]): { days: number; rest: string[] } {
+        const rest: string[] = [];
+        let foundDays: number | null = null;
+        for (const a of args) {
+            if (a.startsWith('--')) {
+                rest.push(a);
+                continue;
+            }
+            const num = parseInt(a, 10);
+            if (!isNaN(num) && num > 0 && foundDays === null) {
+                foundDays = num;
+            } else {
+                rest.push(a);
+            }
+        }
+        return { days: foundDays ?? 1095, rest };
+    }
+
+    const { days: extractedDays, rest: cleanArgs } = extractDaysArg(args);
+    days = extractedDays;
+
+    if (cleanArgs.includes('--preset=15')) {
         symbols = COINS_15;
-        const dArg = args.find(a => !a.startsWith('--'));
-        days = dArg ? parseInt(dArg, 10) : 1095;
-    } else if (args.includes('--preset=40')) {
+    } else if (cleanArgs.includes('--preset=40')) {
         symbols = COINS_40;
-        const dArg = args.find(a => !a.startsWith('--'));
-        days = dArg ? parseInt(dArg, 10) : 365;
-    } else if (args.includes('--preset=quality')) {
+    } else if (cleanArgs.includes('--preset=quality')) {
         symbols = COINS_QUALITY;
-        const dArg = args.find(a => !a.startsWith('--'));
-        days = dArg ? parseInt(dArg, 10) : 365;
-    } else if (args.includes('--preset=3year')) {
+    } else if (cleanArgs.includes('--preset=3year')) {
         symbols = COINS_15;
         days = 1095; // ~3 years (June 2023 – June 2026)
-    } else if (args.includes('--preset=screener')) {
-        const dArg = args.find(a => !a.startsWith('--'));
-        days = dArg ? parseInt(dArg, 10) : 365;
+    } else if (cleanArgs.includes('--preset=screener')) {
         console.log('\n📡 Running live screener to get today\'s coin list...');
         symbols = await Screener.getTopTrendingCoins(20);
         if (symbols.length === 0) { console.error('❌ Screener returned 0 coins'); process.exit(1); }
-    } else if (args.length > 0) {
-        const lastNum = parseInt(args[args.length - 1], 10);
-        if (!isNaN(lastNum) && lastNum > 0) {
-            days = lastNum;
-            symbols = args.slice(0, -1).map(s => s.toUpperCase());
-        } else {
-            symbols = args.map(s => s.toUpperCase());
-        }
+    } else if (cleanArgs.length > 0) {
+        // Argumen non-flag dianggap sebagai simbol koin
+        symbols = cleanArgs.map(s => s.toUpperCase());
         if (symbols.length === 0) symbols = COINS_15;
     } else {
         // Default: run all 15 coins for 3 years
