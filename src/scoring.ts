@@ -10,16 +10,16 @@ import {
 // PRESET: "Sniper RR" — relaxed gates + high RR threshold for high-reward setups.
 
 // Environment variable overrides for all SMC_CONFIG parameters
-const REQUIRE_MTF_FVG = process.env.REQUIRE_MTF_FVG === 'true' || process.env.REQUIRE_MTF_FVG === undefined;
+const REQUIRE_MTF_FVG = process.env.REQUIRE_MTF_FVG === 'true';
 const REQUIRE_STRUCTURE_BIAS = process.env.REQUIRE_STRUCTURE_BIAS !== 'false';
-const REQUIRE_4H_BIAS = process.env.REQUIRE_4H_BIAS !== 'false';
+const REQUIRE_4H_BIAS = process.env.REQUIRE_4H_BIAS === 'true';
 const REQUIRE_UNMITIGATED = process.env.REQUIRE_UNMITIGATED !== 'false';
-const REQUIRE_LIQUIDITY_SWEEP = process.env.REQUIRE_LIQUIDITY_SWEEP !== 'false';
-const REQUIRE_DISPLACEMENT = process.env.REQUIRE_DISPLACEMENT !== 'false';
+const REQUIRE_LIQUIDITY_SWEEP = process.env.REQUIRE_LIQUIDITY_SWEEP === 'true';
+const REQUIRE_DISPLACEMENT = process.env.REQUIRE_DISPLACEMENT === 'true';
 const REQUIRE_OB_CONFLUENCE = process.env.REQUIRE_OB_CONFLUENCE === 'true';
 const REQUIRE_NO_INDUCEMENT = true; // Hard filter
 const KILL_ZONE_ONLY = process.env.KILL_ZONE_ONLY === 'true';
-const MIN_RR = parseFloat(process.env.MIN_RR || '3');
+const MIN_RR = parseFloat(process.env.MIN_RR || '2');
 const TP_COUNT = parseInt(process.env.TP_COUNT || '2', 10);
 const SL_BUFFER_PCT = parseFloat(process.env.SL_BUFFER_PCT || '0.002');
 const MIN_FVG_AGE = parseInt(process.env.MIN_FVG_AGE || '1', 10);

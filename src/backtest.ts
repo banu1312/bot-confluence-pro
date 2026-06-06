@@ -249,7 +249,7 @@ async function runBacktest(symbol: string, days: number, verbose: boolean = true
         console.error(`❌ ${symbol}: fetch failed — ${e.message}`);
         return [];
     }
-    console.log(`   Got ${c5m.length}×5m ${c15m.length}×15m ${c1h.length}×1H in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    console.log(`   Got ${c5m.length}×5m ${c15m.length}×15m ${c1h.length}×1H ${c4h.length}×4H in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
     if (c5m.length < WINDOW_BARS + 10 || c1h.length < WINDOW_BARS + 5) {
         console.warn(`⚠️  ${symbol}: insufficient data — skipping`);
@@ -305,6 +305,7 @@ async function runBacktest(symbol: string, days: number, verbose: boolean = true
     }
 
     process.stdout.write('                    \r');
+    console.log(`   📊 ${symbol}: ${trades.length} signals generated`);
     printReport(symbol, days, trades, verbose);
     return trades;
 }
@@ -753,6 +754,7 @@ async function main() {
             originalLog(...args);
         };
         
+        console.log(`\n📊 Total signals across all coins: ${allTrades.length}`);
         printCombinedReport(allTrades, days);
         
         // Restore console.log
