@@ -13,7 +13,7 @@ interface Candle {
     ts: number; open: number; high: number; low: number; close: number; volume: number;
 }
 
-type EndReason = 'TP_FULL' | 'TP1_BE_HOLD' | 'TP1_BE_STOP' | 'SL' | 'OPEN';
+type EndReason = 'TP_FULL' | 'TP1_BE_HOLD' | 'TP1_BE_STOP' | 'SL' | 'OPEN' | 'EARLY_CUT' | 'TP_RSI';
 
 interface Trade {
     symbol: string;
