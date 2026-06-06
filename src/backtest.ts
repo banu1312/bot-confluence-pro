@@ -39,6 +39,14 @@ const MS_PER_HOUR = 60 * 60 * 1000;
 const PAGE_DELAY_MS = 150;      // ms between paginated fetches to stay within rate limit
 const COIN_PAUSE_MS = 8000;     // ms between coins in batch mode
 
+// 15 Mid-Cap, High Volatility, High Volume coins for RSI-FIBO strategy.
+// These coins are selected for their strong trending behavior and liquidity.
+const COINS_15: string[] = [
+    'FETUSDT', 'OPUSDT',  'RUNEUSDT', 'GALAUSDT', 'FILUSDT',
+    'TONUSDT', 'APTUSDT', 'SANDUSDT', 'UNIUSDT',  'NEARUSDT',
+    'IMXUSDT', 'ARBUSDT', 'LDOUSDT',  'JUPUSDT',  'GMXUSDT'
+];
+
 // 40 representative USDT-FUTURES coins matching the live screener universe.
 // Same criteria as screener.ts: high-volume, established, SMC-tradeable.
 const COINS_40: string[] = [
@@ -822,9 +830,13 @@ function saveCombinedLogToFile(logContent: string, symbols: string[], days: numb
 async function main() {
     const args = process.argv.slice(2);
     let symbols: string[] = [];
-    let days = 365;
+    let days = 1095; // Default: 3 years
 
-    if (args.includes('--preset=40')) {
+    if (args.includes('--preset=15')) {
+        symbols = COINS_15;
+        const dArg = args.find(a => !a.startsWith('--'));
+        days = dArg ? parseInt(dArg, 10) : 1095;
+    } else if (args.includes('--preset=40')) {
         symbols = COINS_40;
         const dArg = args.find(a => !a.startsWith('--'));
         days = dArg ? parseInt(dArg, 10) : 365;
@@ -833,10 +845,7 @@ async function main() {
         const dArg = args.find(a => !a.startsWith('--'));
         days = dArg ? parseInt(dArg, 10) : 365;
     } else if (args.includes('--preset=3year')) {
-        symbols = COINS_QUALITY;
-        days = 1095; // ~3 years (June 2023 – June 2026)
-    } else if (args.includes('--preset=3year')) {
-        symbols = COINS_QUALITY;
+        symbols = COINS_15;
         days = 1095; // ~3 years (June 2023 – June 2026)
     } else if (args.includes('--preset=screener')) {
         const dArg = args.find(a => !a.startsWith('--'));
@@ -852,14 +861,15 @@ async function main() {
         } else {
             symbols = args.map(s => s.toUpperCase());
         }
-        if (symbols.length === 0) symbols = ['BTCUSDT'];
+        if (symbols.length === 0) symbols = COINS_15;
     } else {
-        symbols = ['BTCUSDT'];
-        days = 30;
+        // Default: run all 15 coins for 3 years
+        symbols = COINS_15;
+        days = 1095;
     }
 
     if (isNaN(days) || days < 1) {
-        console.error('Usage: ts-node src/backtest.ts [--preset=40|quality|screener] [SYMBOL...] DAYS');
+        console.error('Usage: ts-node src/backtest.ts [--preset=15|40|quality|screener] [SYMBOL...] DAYS');
         process.exit(1);
     }
 
