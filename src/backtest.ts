@@ -872,9 +872,8 @@ async function main() {
         symbols = cleanArgs.map(s => s.toUpperCase());
         if (symbols.length === 0) symbols = COINS_15;
     } else {
-        // Default: run all 15 coins for 3 years
+        // Default: run all 15 coins
         symbols = COINS_15;
-        days = 1095;
     }
 
     if (isNaN(days) || days < 1) {
