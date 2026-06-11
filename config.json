@@ -1,6 +1,4 @@
 {
-  "default_strategy": "rsi_fibo",
-  "coin_overrides": {
-    "BTCUSDT": "smc"
-  }
+  "default_strategy": "ema_impulse_trail",
+  "coin_overrides": {}
 }

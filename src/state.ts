@@ -156,8 +156,8 @@ export class StateManager {
     public static isHalted(symbol: string, maxLossR: number): boolean {
         this.rolloverIfNeeded();
         const currentLoss = this.dailyLoss.realizedR[symbol] || 0;
-        // Halted jika rugi sudah melebihi batas (misal -5R dengan limit 3R)
-        return Math.abs(currentLoss) >= maxLossR;
+        // Halted hanya jika rugi melebihi batas (nilai negatif, misal -3R dengan limit 3R)
+        return currentLoss <= -maxLossR;
     }
 
     public static addPosition(pos: ActivePosition) {

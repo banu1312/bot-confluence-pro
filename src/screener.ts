@@ -17,65 +17,24 @@ function ensureAscending(rows: any[], label: string): any[] {
     return rows;
 }
 
-// Coins with chronically poor SMC structure (TP1 fill < 10% over 365-day backtest).
-// These coins have too much noise at 5m level for FVG entries to work reliably.
-// Updated from backtest_40coins.log + backtest_quality.log (2026-05-29).
-const SMC_BLACKLIST = new Set([
-    // Poor SMC structure (TP1 fill <10% over 365-day backtest)
-    'ATOMUSDT', 'AAVEUSDT', 'STXUSDT', 'WLDUSDT', 'ORDIUSDT',
-    'DOTUSDT',  'ADAUSDT',  'AXSUSDT', 'TIAUSDT', 'AVAXUSDT',
-    'LINKUSDT', 'SUIUSDT',  'WIFUSDT', 'DOGEUSDT','BNBUSDT',
-    'INJUSDT',  'CRVUSDT',
-    // Commodity/non-crypto tokens — SMC not applicable
-    'XAUUSDT',  'XAGUSDT',  'XAUTUSDT', 'XBTUSD',
-]);
+// Fixed liquid universe for ema_impulse_trail (4H EMA50 impulse + chandelier trail).
+// = COINS_QUALITY from backtest.ts minus APT/TRX (the only 2/22 losers in the
+// 5yr/1825d validation: APT -7.19R, TRX -20.78R; 20/22 profitable, +398.3R total).
+// Fixed and reviewed periodically — NOT re-sorted by daily |change24h| (that broke
+// multi-day trend tracking and couldn't be backtested identically).
+const TRADING_UNIVERSE: string[] = [
+    'BTCUSDT',  'ETHUSDT',  'SOLUSDT',  'XRPUSDT',  'UNIUSDT',
+    'LTCUSDT',  'NEARUSDT', 'ARBUSDT',  'OPUSDT',   'FETUSDT',
+    'TONUSDT',  'JUPUSDT',  'ENAUSDT',  'GMXUSDT',  'SANDUSDT',
+    'IMXUSDT',  'FILUSDT',  'LDOUSDT',  'GALAUSDT', 'RUNEUSDT'
+];
 
 export class Screener {
-    // 1. Fungsi Cari Top Koin — volume tinggi, momentum moderat (SMC-friendly)
+    // 1. Watchlist tetap — basket terkurasi dari backtest, bukan hasil screening harian.
     public static async getTopTrendingCoins(limit: number = 20): Promise<string[]> {
-        try {
-            console.log("🔍 Mengecek market Bitget Futures (smart screener)...");
-            const res = await axios.get('https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES');
-            let tickers = res.data.data;
-
-            // FILTER 1: Base filters — symbol format + blacklist
-            const base = tickers.filter((t: any) =>
-                t.symbol.endsWith('USDT') &&
-                !t.symbol.startsWith('1000') &&
-                !SMC_BLACKLIST.has(t.symbol)
-            );
-
-            // FILTER 2: Volume threshold — try $50M first, fall back to $20M if < 10 coins pass.
-            // $50M eliminates low-volume noise coins. Fallback keeps bot active on quiet days.
-            let volFiltered = base.filter((t: any) => parseFloat(t.usdtVolume) > 50_000_000);
-            if (volFiltered.length < 10) {
-                console.log(`⚠️  [SCREENER] Only ${volFiltered.length} coins at $50M — relaxing to $20M`);
-                volFiltered = base.filter((t: any) => parseFloat(t.usdtVolume) > 20_000_000);
-            }
-
-            // FILTER 3: Momentum moderat — ada arah tapi belum parabolic/dead.
-            // 1.5%–12% range: tighter than before to avoid choppy ranges.
-            tickers = volFiltered.filter((t: any) => {
-                const change = Math.abs(parseFloat(t.change24h || '0'));
-                return change >= 0.015 && change <= 0.12;
-            });
-
-            // SCORE: volume-weighted moderate volatility
-            tickers.sort((a: any, b: any) => {
-                const volA = parseFloat(a.usdtVolume);
-                const volB = parseFloat(b.usdtVolume);
-                const chgA = Math.abs(parseFloat(a.change24h || '0'));
-                const chgB = Math.abs(parseFloat(b.change24h || '0'));
-                return (volB * chgB) - (volA * chgA);
-            });
-
-            const topCoins = tickers.slice(0, limit).map((t: any) => t.symbol);
-            console.log(`✅ [SCREENER] ${topCoins.length} coins selected: ${topCoins.join(', ')}`);
-            return topCoins;
-        } catch (error: any) {
-            console.error("❌ Gagal mengambil data screener:", error.message);
-            return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'SANDUSDT'];
-        }
+        const coins = TRADING_UNIVERSE.slice(0, limit);
+        console.log(`✅ [SCREENER] Fixed universe: ${coins.length} coins: ${coins.join(', ')}`);
+        return coins;
     }
 
     // 2. Fungsi Download Sejarah Harga (OHLC untuk SMC MTF: 5m, 1H & 4H)

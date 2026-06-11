@@ -5,7 +5,9 @@ import {
     hasDisplacementWithVolume, isKillZone, structuralTPLevels, hasInducement,
     findMultiTimeframeFVG, findMultiTimeframeFVG_TopDown, calculateATR
 } from './smc';
-import { SmcStrategy, SMCSignal, SMC_CONFIG } from './strategies/SmcStrategy';
+import { SmcStrategy } from './strategies/SmcStrategy';
+import type { SMCSignal } from './strategies/SmcStrategy';
+export type { SMCSignal } from './strategies/SmcStrategy';
 
 // Tunable confluence requirements. Toggle individual gates without recompiling logic.
 // PRESET: "Sniper RR" — relaxed gates + high RR threshold for high-reward setups.
@@ -20,7 +22,7 @@ const REQUIRE_DISPLACEMENT = process.env.REQUIRE_DISPLACEMENT === 'true';
 const REQUIRE_OB_CONFLUENCE = process.env.REQUIRE_OB_CONFLUENCE === 'true';
 const REQUIRE_NO_INDUCEMENT = true; // Hard filter
 const KILL_ZONE_ONLY = process.env.KILL_ZONE_ONLY === 'true';
-const MIN_RR = parseFloat(process.env.MIN_RR || '2');
+const MIN_RR = parseFloat(process.env.MIN_RR || '3');
 const TP_COUNT = parseInt(process.env.TP_COUNT || '2', 10);
 const SL_BUFFER_PCT = parseFloat(process.env.SL_BUFFER_PCT || '0.002');
 const MIN_FVG_AGE = parseInt(process.env.MIN_FVG_AGE || '1', 10);
@@ -66,21 +68,9 @@ export const SMC_CONFIG = {
     minFvgAge: MIN_FVG_AGE,                  // FVG must be at least N bars old before triggering entry
 };
 
-export interface SMCSignal {
-    symbol: string;
-    side: 'LONG' | 'SHORT';
-    entryPrice: number;
-    slPrice: number;
-    tpLevels: number[];            // sorted nearest → farthest
-    tpPrice: number;               // farthest TP (used for RR validation + backward compat)
-    confluence: string[];
-    ltfTimeframe: '5m' | '15m';   // which LTF triggered the signal
-    data?: MarketData;             // market data snapshot for ATR calculation in execution
-}
 
 const smcStrategyInstance = new SmcStrategy();
 
-export { SMC_CONFIG };
 
 export class ScoringEngine {
     // Diagnostic gate rejection counters (reset per backtest run)

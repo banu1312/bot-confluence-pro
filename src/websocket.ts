@@ -1,15 +1,18 @@
 import WebSocket from 'ws';
 import { ExecutionEngine } from './execution';
+import { StateManager } from './state';
 import { findSwings, detectBias, findFVGs, isFVGUnmitigated, hasDisplacement, priceInZone } from './smc';
 import { getStrategyInstance } from './strategies/StrategyFactory';
 import { SmcStrategy } from './strategies/SmcStrategy';
 import { RsiFiboStrategy } from './strategies/RsiFiboStrategy';
+import { EmaImpulseTrailStrategy } from './strategies/EmaImpulseTrailStrategy';
 
 export let marketData: Record<string, any> = {};
 
 let ws: WebSocket | null = null;
 let pingInterval: NodeJS.Timeout | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
+let monitorInterval: NodeJS.Timeout | null = null;
 let reconnectAttempts = 0;
 let currentCoins: string[] = [];
 
@@ -61,31 +64,22 @@ function detectBOS(
 }
 
 // ─── Fungsi untuk menggeser SL ke Breakeven ────────────────────────────────
-function moveSLToBreakeven(symbol: string, entryPrice: number) {
+async function moveSLToBreakeven(symbol: string, entryPrice: number) {
     const pos = StateManager.find(symbol);
-    if (!pos) return;
-
-    // Hanya geser jika belum pernah di-breakeven
-    if (pos.breakevenMoved) return;
-
-    // Geser SL ke entry price
-    pos.slPrice = entryPrice;
-    pos.breakevenMoved = true;
-
-    // Update di state manager
-    StateManager.updateAfterTp1(symbol, entryPrice, null, pos.qty);
-    console.log(`🔒 [BE] ${symbol}: SL moved to breakeven (${entryPrice})`);
+    if (!pos || pos.breakevenMoved) return;
+    // Delegate ke ExecutionEngine agar SL plan di exchange ikut di-update/cancel/replace
+    await ExecutionEngine.moveSLToTrailing(pos, pos.qty, entryPrice);
+    console.log(`🔒 [BE] ${symbol}: SL moved to breakeven via exchange (${entryPrice})`);
 }
 
 // ─── Fungsi monitoring posisi aktif ────────────────────────────────────────
-function monitorActivePositions() {
+async function monitorActivePositions() {
     for (const pos of StateManager.positions) {
         const data = marketData[pos.symbol];
         if (!data) continue;
 
         const ltfHighs = data.highs5m;
         const ltfLows = data.lows5m;
-        const ltfCloses = data.closes5m;
 
         if (ltfHighs.length < 10) continue;
 
@@ -93,7 +87,7 @@ function monitorActivePositions() {
         const bosDetected = detectBOS(ltfHighs, ltfLows, pos.side, 5);
 
         if (bosDetected && !pos.breakevenMoved) {
-            moveSLToBreakeven(pos.symbol, pos.entryPrice);
+            await moveSLToBreakeven(pos.symbol, pos.entryPrice);
         }
     }
 }
@@ -191,6 +185,7 @@ function clearTimers() {
     if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     if (healthCheckInterval) { clearInterval(healthCheckInterval); healthCheckInterval = null; }
+    if (monitorInterval) { clearInterval(monitorInterval); monitorInterval = null; }
 }
 
 function scheduleReconnect() {
@@ -227,8 +222,11 @@ function connect() {
             if (ws?.readyState === WebSocket.OPEN) ws.send('ping');
         }, PING_MS);
 
-        // Monitoring posisi aktif setiap 5 detik
-        setInterval(monitorActivePositions, 5000);
+        // Monitoring posisi aktif setiap 5 detik (clear dulu agar tidak leak saat reconnect)
+        if (monitorInterval) clearInterval(monitorInterval);
+        monitorInterval = setInterval(() => {
+            monitorActivePositions().catch(e => console.error('[MONITOR]', e.message));
+        }, 5000);
 
         // Start health check interval
         if (healthCheckInterval) clearInterval(healthCheckInterval);
@@ -314,6 +312,21 @@ function connect() {
                         const signal = smcStrategy.evaluateSMCMTF(symbol, m, '15m');
                         if (signal) await ExecutionEngine.openPositionSMC(signal);
                     }
+                } else if (strategy.name === 'ema_impulse_trail') {
+                    if (dataKey === '4h') {
+                        const emaStrategy = strategy as EmaImpulseTrailStrategy;
+                        const activePos = StateManager.find(symbol);
+                        if (activePos) {
+                            const trail = emaStrategy.evaluateExit(symbol, m);
+                            if (trail) {
+                                await ExecutionEngine.setSLAtBreakeven(activePos, trail.newSlPrice);
+                                console.log(`🛡️  [EMA-IMPULSE] ${symbol}: trailing SL → ${trail.newSlPrice.toFixed(6)}`);
+                            }
+                        } else {
+                            const signal = emaStrategy.evaluateEntry(symbol, m);
+                            if (signal) await ExecutionEngine.openPositionSMC(signal);
+                        }
+                    }
                 } else if (strategy.name === 'rsi_fibo') {
                     const rsiFiboStrategy = strategy as RsiFiboStrategy;
                     if (dataKey === '4h') {
@@ -328,7 +341,7 @@ function connect() {
                         if (triggerContext) {
                             m._rsiFiboTrigger = triggerContext;
                         }
-                    } else if (dataKey === '15m' && m._rsiFiboTrigger) {
+                    } else if (dataKey === '15m') {
                         const candle15m = {
                             open: m.opens15m[m.opens15m.length - 1],
                             high: m.highs15m[m.highs15m.length - 1],
@@ -336,20 +349,38 @@ function connect() {
                             close: m.closes15m[m.closes15m.length - 1],
                             ts: parseInt(m.lastTs15m, 10)
                         };
-                        const entryResult = await rsiFiboStrategy.checkLTFEntry(symbol, m._rsiFiboTrigger, candle15m);
-                        if (entryResult && entryResult.action === 'filled') {
-                            const signal = {
-                                symbol,
-                                side: entryResult.context.side,
-                                entryPrice: entryResult.context.entryPrice,
-                                slPrice: entryResult.context.slPrice,
-                                tpLevels: [],
-                                tpPrice: 0,
-                                confluence: ['RSI-FIBO'],
-                                ltfTimeframe: '15m' as const,
-                                data: m
-                            };
-                            await ExecutionEngine.openPositionSMC(signal);
+                        // TP/SL/BE/Partial monitoring for active IN_TRADE positions
+                        const activePos = StateManager.find(symbol);
+                        if (activePos) {
+                            const manageResult = await rsiFiboStrategy.manageActivePosition(
+                                activePos, candle15m.close, null, candle15m
+                            );
+                            if (manageResult?.action === 'close') {
+                                await ExecutionEngine.closePosition(activePos, manageResult.reason);
+                            } else if (manageResult?.action === 'move_sl') {
+                                await ExecutionEngine.setSLAtBreakeven(activePos, manageResult.newSlPrice);
+                            } else if (manageResult?.action === 'partial_close') {
+                                await ExecutionEngine.partialClosePosition(activePos, manageResult.fraction, manageResult.newSlPrice);
+                            }
+                        }
+                        // Entry phase: wait for LTF confirmation
+                        if (m._rsiFiboTrigger) {
+                            const entryResult = await rsiFiboStrategy.checkLTFEntry(symbol, m._rsiFiboTrigger, candle15m);
+                            if (entryResult && entryResult.action === 'enter') {
+                                const signal = {
+                                    symbol,
+                                    side: entryResult.side,
+                                    entryPrice: entryResult.entryPrice,
+                                    slPrice: entryResult.slPrice,
+                                    tpLevels: [],
+                                    tpPrice: 0,
+                                    confluence: ['RSI-FIBO'],
+                                    ltfTimeframe: '15m' as const,
+                                    data: m
+                                };
+                                await ExecutionEngine.openPositionSMC(signal);
+                                m._rsiFiboTrigger = null;
+                            }
                         }
                     }
                 }

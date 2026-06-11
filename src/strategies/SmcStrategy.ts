@@ -20,7 +20,7 @@ const REQUIRE_DISPLACEMENT = process.env.REQUIRE_DISPLACEMENT === 'true';
 const REQUIRE_OB_CONFLUENCE = process.env.REQUIRE_OB_CONFLUENCE === 'true';
 const REQUIRE_NO_INDUCEMENT = true; // Hard filter
 const KILL_ZONE_ONLY = process.env.KILL_ZONE_ONLY === 'true';
-const MIN_RR = parseFloat(process.env.MIN_RR || '2');
+const MIN_RR = parseFloat(process.env.MIN_RR || '3');
 const TP_COUNT = parseInt(process.env.TP_COUNT || '2', 10);
 const SL_BUFFER_PCT = parseFloat(process.env.SL_BUFFER_PCT || '0.002');
 const MIN_FVG_AGE = parseInt(process.env.MIN_FVG_AGE || '1', 10);

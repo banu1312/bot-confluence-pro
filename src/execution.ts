@@ -3,21 +3,22 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { StateManager, ActivePosition } from './state';
 import { SMCSignal } from './scoring';
-import { calculateATR } from './smc';
 dotenv.config();
 
 const API_KEY = process.env.EXCHANGE_API_KEY || '';
 const API_SECRET = process.env.EXCHANGE_API_SECRET || '';
 const API_PASSPHRASE = process.env.EXCHANGE_API_PASSPHRASE || '';
-const MARGIN = parseFloat(process.env.MARGIN_PER_TRADE || '10');
 const LEVERAGE = parseInt(process.env.LEVERAGE || '20', 10);
 const DRY_RUN = process.env.DRY_RUN === 'true';
 const MAX_DAILY_LOSS_R = parseFloat(process.env.MAX_DAILY_LOSS_R || '3');
 
-// Dynamic position sizing parameters
-const RISK_PER_TRADE_PCT = parseFloat(process.env.RISK_PER_TRADE_PCT || '1');
-const ATR_PERIOD = parseInt(process.env.ATR_PERIOD || '14', 10);
-const ATR_MULTIPLIER_SL = parseFloat(process.env.ATR_MULTIPLIER_SL || '2');
+// Max posisi konkuren lintas semua koin — samakan dengan MAX_CONCURRENT_POSITIONS di backtest.ts
+const MAX_CONCURRENT_POSITIONS = parseInt(process.env.MAX_CONCURRENT_POSITIONS || '3', 10);
+
+// Margin-based sizing: gunakan MARGIN_PCT% dari available balance sebagai isolated margin
+// Notional = margin × leverage → qty = notional / entryPrice
+const MARGIN_PCT = parseFloat(process.env.MARGIN_PCT || '0.10'); // default 10%
+const MIN_MARGIN_USDT = parseFloat(process.env.MIN_MARGIN_USDT || '5'); // guard minimum
 
 // Trailing stop parameters
 const TRAIL_PCT = parseFloat(process.env.TRAIL_PCT || '0.005'); // 0.5% default
@@ -206,24 +207,23 @@ export class ExecutionEngine {
         StateManager.persist();
     }
 
-    // ─── Dynamic position sizing based on ATR and equity ───────────────────
-    // Calculates qty so that the dollar risk (entry - SL) equals
-    // RISK_PER_TRADE_PCT % of current equity.
+    // ─── Margin-based position sizing ─────────────────────────────────────
+    // Pakai MARGIN_PCT% dari available balance sebagai isolated margin.
+    // Notional = margin × leverage → qty = notional / entryPrice
     private static calculateDynamicQty = (
         symbol: string,
         entryPrice: number,
-        side: 'LONG' | 'SHORT',
-        slPrice: number,
-        equity: number
+        _side: 'LONG' | 'SHORT',
+        _slPrice: number,
+        _equity: number,
+        available: number
     ): number | null => {
         const spec = ExecutionEngine.specs.get(symbol);
         if (!spec) return null;
 
-        const slDistance = Math.abs(entryPrice - slPrice);
-        if (slDistance <= 0) return null;
-
-        const riskAmount = equity * (RISK_PER_TRADE_PCT / 100);
-        const rawQty = riskAmount / slDistance;
+        const marginAmount = available * MARGIN_PCT;
+        const notional     = marginAmount * LEVERAGE;
+        const rawQty       = notional / entryPrice;
 
         const qtyStr = ExecutionEngine.formatQty(rawQty, spec);
         if (qtyStr === null) return null;
@@ -369,11 +369,80 @@ export class ExecutionEngine {
         StateManager.updateAfterTp1(position.symbol, newSlPrice, newSlId, remainingQty);
     }
 
+    public static async setSLAtBreakeven(position: ActivePosition, newSlPrice: number): Promise<void> {
+        const spec = this.specs.get(position.symbol);
+        if (!spec || !position.slPlanId) return;
+        const qtyStr = this.formatQty(position.qty, spec);
+        if (!qtyStr) return;
+        const newSlStr = this.formatPrice(newSlPrice, spec);
+        if (DRY_RUN) { console.log(`💡 [DRY-RUN] SL move to BE ${newSlStr} skipped.`); return; }
+        await this.cancelPlanOrder(position.symbol, 'loss_plan', position.slPlanId);
+        const newId = await this.placePlanOrder(position.symbol, position.side, 'loss_plan', newSlStr, qtyStr);
+        StateManager.updateAfterTp1(position.symbol, newSlPrice, newId, position.qty);
+        console.log(`🔒 [EXEC] ${position.symbol} SL moved to BE @ ${newSlStr}`);
+    }
+
+    public static async partialClosePosition(position: ActivePosition, fraction: number, newSlPrice: number): Promise<void> {
+        const spec = this.specs.get(position.symbol);
+        if (!spec) return;
+        const closeQty = position.qty * fraction;
+        const closeQtyStr = this.formatQty(closeQty, spec);
+        if (!closeQtyStr) return;
+        console.log(`💰 [EXEC] ${position.symbol} partial close ${(fraction*100).toFixed(0)}% @ market`);
+        if (!DRY_RUN) {
+            const closeSide = position.side === 'LONG' ? 'sell' : 'buy';
+            await this.sendRequestWithRetry('POST', '/api/v2/mix/order/place-order', {
+                symbol: position.symbol, productType: 'USDT-FUTURES', marginCoin: 'USDT',
+                marginMode: 'isolated', side: closeSide, orderType: 'market',
+                size: closeQtyStr, reduceOnly: 'YES',
+                clientOid: `partial-${position.symbol}-${Date.now()}`
+            }, `partialClose(${position.symbol})`);
+        } else {
+            console.log(`💡 [DRY-RUN] Partial close skipped for ${position.symbol}.`);
+        }
+        const remainQty = position.qty - closeQty;
+        const remainQtyStr = this.formatQty(remainQty, spec);
+        if (position.slPlanId && remainQtyStr) {
+            await this.cancelPlanOrder(position.symbol, 'loss_plan', position.slPlanId);
+            const newSlStr = this.formatPrice(newSlPrice, spec);
+            const newSlId  = await this.placePlanOrder(position.symbol, position.side, 'loss_plan', newSlStr, remainQtyStr);
+            StateManager.updateAfterTp1(position.symbol, newSlPrice, newSlId, remainQty);
+        }
+    }
+
+    public static async closePosition(position: ActivePosition, reason: string): Promise<void> {
+        const spec = this.specs.get(position.symbol);
+        if (!spec) {
+            console.warn(`⚠️  [CLOSE] No spec for ${position.symbol}`);
+            return;
+        }
+        const qtyStr = this.formatQty(position.qty, spec);
+        if (!qtyStr) return;
+
+        console.log(`🔒 [CLOSE] ${position.symbol} ${position.side} @ market — reason: ${reason}`);
+
+        await this.cancelAllPlansFor(position);
+
+        if (!DRY_RUN) {
+            const closeSide = position.side === 'LONG' ? 'sell' : 'buy';
+            await this.sendRequestWithRetry('POST', '/api/v2/mix/order/place-order', {
+                symbol: position.symbol, productType: 'USDT-FUTURES', marginCoin: 'USDT',
+                marginMode: 'isolated', side: closeSide, orderType: 'market',
+                size: qtyStr, reduceOnly: 'YES',
+                clientOid: `close-${position.symbol}-${Date.now()}`
+            }, `closePosition(${position.symbol})`);
+        } else {
+            console.log(`💡 [DRY-RUN] Close order skipped for ${position.symbol}.`);
+        }
+
+        StateManager.removePosition(position.symbol);
+    }
+
     public static async openPositionSMC(signal: SMCSignal) {
         const { symbol, side, entryPrice, slPrice, tpLevels } = signal;
 
         if (this.executingSymbols.has(symbol) || StateManager.find(symbol)) return;
-        if (StateManager.positions.length >= 1) return;
+        if (StateManager.positions.length >= MAX_CONCURRENT_POSITIONS) return;
         if (StateManager.isHalted(symbol, MAX_DAILY_LOSS_R)) {
             console.log(`🚫 [HALT] ${symbol}: daily loss limit (-${MAX_DAILY_LOSS_R}R) reached, skipping until UTC midnight`);
             return;
@@ -395,25 +464,20 @@ export class ExecutionEngine {
             const slStr = this.formatPrice(sl, spec);
             const tpStrs = tpLevels.map(tp => this.formatPrice(tp, spec));
 
-            // Dynamic position sizing based on ATR and equity
+            // Fetch account info untuk margin-based sizing
             const acct = await this.fetchAccountInfo();
-            if (!acct || acct.available < MARGIN) {
-                console.warn(`⚠️  [EXEC] ${symbol}: insufficient margin (available: ${acct?.available.toFixed(2) ?? 0} USDT, needed: ${MARGIN} USDT)`);
+            const marginNeeded = (acct?.available ?? 0) * MARGIN_PCT;
+            if (!acct || acct.available < MIN_MARGIN_USDT || marginNeeded < MIN_MARGIN_USDT) {
+                console.warn(`⚠️  [EXEC] ${symbol}: saldo tidak cukup (available=${acct?.available.toFixed(2) ?? 0} USDT, margin=${marginNeeded.toFixed(2)} USDT, min=${MIN_MARGIN_USDT} USDT)`);
                 return;
             }
 
-            // Calculate ATR for the relevant LTF (5m or 15m)
-            const atr = calculateATR(
-                signal.ltfTimeframe === '5m' ? (signal.data?.highs5m ?? []) : (signal.data?.highs15m ?? []),
-                signal.ltfTimeframe === '5m' ? (signal.data?.lows5m ?? []) : (signal.data?.lows15m ?? []),
-                signal.ltfTimeframe === '5m' ? (signal.data?.closes5m ?? []) : (signal.data?.closes15m ?? []),
-                ATR_PERIOD
-            );
+            console.log(`💵 [EXEC] ${symbol}: available=${acct.available.toFixed(2)} USDT → margin=${marginNeeded.toFixed(2)} USDT (${(MARGIN_PCT*100).toFixed(0)}%)`);
 
-            // Use dynamic qty based on risk % of equity
-            const totalQtyNum = this.calculateDynamicQty(symbol, entryPrice, side, sl, acct.equity);
+            // Hitung qty: notional = margin × leverage, qty = notional / entryPrice
+            const totalQtyNum = this.calculateDynamicQty(symbol, entryPrice, side, sl, acct.equity, acct.available);
             if (totalQtyNum === null) {
-                console.warn(`⚠️  [EXEC] ${symbol}: dynamic qty calculation failed`);
+                console.warn(`⚠️  [EXEC] ${symbol}: qty calculation failed`);
                 return;
             }
             const totalQtyStr = this.formatQty(totalQtyNum, spec);
@@ -429,24 +493,28 @@ export class ExecutionEngine {
             }
 
             // Split qty across TPs. Floor each piece, last TP absorbs remainder.
+            // tpCount=0 is valid for strategies without structural TPs (e.g. RSI-FIBO).
             const tpCount = tpLevels.length;
-            const evenSlice = totalQtyNum / tpCount;
-            const sliceStr = this.formatQty(evenSlice, spec);
-            if (sliceStr === null) {
-                console.warn(`⚠️  [EXEC] ${symbol}: qty ${totalQtyNum} too small to split across ${tpCount} TPs`);
-                return;
-            }
-            const sliceNum = parseFloat(sliceStr);
             const tpQtys: string[] = [];
-            for (let i = 0; i < tpCount - 1; i++) tpQtys.push(sliceStr);
-            // Last TP gets the remainder — validated via formatQty for proper min-size check
-            const lastQtyRaw = totalQtyNum - sliceNum * (tpCount - 1);
-            const lastQtyStr = this.formatQty(lastQtyRaw, spec);
-            if (lastQtyStr === null) {
-                console.warn(`⚠️  [EXEC] ${symbol}: last TP slice ${lastQtyRaw.toFixed(8)} below minTradeNum`);
-                return;
+
+            if (tpCount > 0) {
+                const evenSlice = totalQtyNum / tpCount;
+                const sliceStr = this.formatQty(evenSlice, spec);
+                if (sliceStr === null) {
+                    console.warn(`⚠️  [EXEC] ${symbol}: qty ${totalQtyNum} too small to split across ${tpCount} TPs`);
+                    return;
+                }
+                const sliceNum = parseFloat(sliceStr);
+                for (let i = 0; i < tpCount - 1; i++) tpQtys.push(sliceStr);
+                // Last TP gets the remainder — validated via formatQty for proper min-size check
+                const lastQtyRaw = totalQtyNum - sliceNum * (tpCount - 1);
+                const lastQtyStr = this.formatQty(lastQtyRaw, spec);
+                if (lastQtyStr === null) {
+                    console.warn(`⚠️  [EXEC] ${symbol}: last TP slice ${lastQtyRaw.toFixed(8)} below minTradeNum`);
+                    return;
+                }
+                tpQtys.push(lastQtyStr);
             }
-            tpQtys.push(lastQtyStr);
 
             const configured = await this.ensureSymbolConfig(symbol);
             if (!configured) return;

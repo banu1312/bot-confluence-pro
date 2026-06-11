@@ -10,6 +10,11 @@ const RSI_OVERSOLD = 30;
 const FIBO_LEVELS = [0.618, 0.786];
 const MARKET_CAP_RANK_MIN = 50;
 const MARKET_CAP_RANK_MAX = 200;
+// Fix 1: Daily RSI trend filter
+const DAILY_RSI_LONG_MIN = 40;
+const DAILY_RSI_SHORT_MAX = 60;
+// Fix 2: Max concurrent positions across all coins
+const MAX_CONCURRENT = 3;
 
 interface RsiFiboContext {
     symbol: string;
@@ -26,7 +31,6 @@ interface RsiFiboContext {
     filled: boolean;
     fillPrice?: number;
     fillTime?: number;
-    earlyCutTriggered: boolean;
     tpTriggered: boolean;
 }
 
@@ -86,23 +90,20 @@ export class RsiFiboStrategy implements BaseStrategy {
     }
 
     async checkHTFTrigger(symbol: string, candle4h: any): Promise<any> {
-        // If there is already an active position for this symbol, do NOT generate new trigger
-        if (this.activePositions.has(symbol)) {
-            return null;
-        }
+        if (this.activePositions.has(symbol)) return null;
+        // Fix 2: max concurrent positions across all coins
+        if (this.activePositions.size >= MAX_CONCURRENT) return null;
 
         try {
-            const res = await axios.get(
-                `${BASE_URL}/api/v2/mix/market/candles?symbol=${symbol}&granularity=4H&productType=USDT-FUTURES&limit=${RSI_PERIOD + 5}`
-            );
-            const rows = res.data.data || [];
+            const [res4h, res1d] = await Promise.all([
+                axios.get(`${BASE_URL}/api/v2/mix/market/candles`, { params: { symbol, granularity: '4H', productType: 'USDT-FUTURES', limit: RSI_PERIOD + 5 } }),
+                axios.get(`${BASE_URL}/api/v2/mix/market/candles`, { params: { symbol, granularity: '1D', productType: 'USDT-FUTURES', limit: RSI_PERIOD + 5 } })
+            ]);
+
+            const rows = res4h.data.data || [];
             if (rows.length < RSI_PERIOD + 1) return null;
 
             const closes = rows.map((r: string[]) => parseFloat(r[4]));
-            const highs = rows.map((r: string[]) => parseFloat(r[2]));
-            const lows = rows.map((r: string[]) => parseFloat(r[3]));
-            const opens = rows.map((r: string[]) => parseFloat(r[1]));
-
             const rsi = this.calculateRSI(closes, RSI_PERIOD);
             const currentRsi = rsi[rsi.length - 1];
             const currentCandle = rows[rows.length - 1];
@@ -111,12 +112,13 @@ export class RsiFiboStrategy implements BaseStrategy {
             const currentLow = parseFloat(currentCandle[3]);
             const currentOpen = parseFloat(currentCandle[1]);
 
+            let trigger: any = null;
+
             if (currentRsi > RSI_OVERBOUGHT) {
                 const upperWick = currentHigh - Math.max(currentClose, currentOpen);
                 const lowerWick = Math.min(currentClose, currentOpen) - currentLow;
                 if (upperWick > lowerWick) {
-                    console.log(`📊 [RSI-FIBO] ${symbol} SHORT trigger: RSI=${currentRsi.toFixed(2)}, upperWick=${upperWick.toFixed(4)}, lowerWick=${lowerWick.toFixed(4)}`);
-                    return {
+                    trigger = {
                         triggered: true,
                         side: 'SHORT',
                         high4h: currentHigh,
@@ -126,14 +128,11 @@ export class RsiFiboStrategy implements BaseStrategy {
                         fibo786: currentHigh - (currentHigh - currentLow) * 0.786
                     };
                 }
-            }
-
-            if (currentRsi < RSI_OVERSOLD) {
+            } else if (currentRsi < RSI_OVERSOLD) {
                 const upperWick = currentHigh - Math.max(currentClose, currentOpen);
                 const lowerWick = Math.min(currentClose, currentOpen) - currentLow;
                 if (lowerWick > upperWick) {
-                    console.log(`📊 [RSI-FIBO] ${symbol} LONG trigger: RSI=${currentRsi.toFixed(2)}, upperWick=${upperWick.toFixed(4)}, lowerWick=${lowerWick.toFixed(4)}`);
-                    return {
+                    trigger = {
                         triggered: true,
                         side: 'LONG',
                         high4h: currentHigh,
@@ -145,7 +144,26 @@ export class RsiFiboStrategy implements BaseStrategy {
                 }
             }
 
-            return null;
+            if (!trigger) return null;
+
+            // Fix 1: Daily RSI trend filter
+            const rows1d = res1d.data.data || [];
+            if (rows1d.length >= RSI_PERIOD + 1) {
+                const dailyCloses = rows1d.map((r: string[]) => parseFloat(r[4]));
+                const dailyRsiArr = this.calculateRSI(dailyCloses, RSI_PERIOD);
+                const dailyRsi = dailyRsiArr[dailyRsiArr.length - 1];
+                if (trigger.side === 'LONG' && dailyRsi < DAILY_RSI_LONG_MIN) {
+                    console.log(`🚫 [RSI-FIBO] ${symbol} LONG blocked: daily RSI ${dailyRsi.toFixed(1)} < ${DAILY_RSI_LONG_MIN}`);
+                    return null;
+                }
+                if (trigger.side === 'SHORT' && dailyRsi > DAILY_RSI_SHORT_MAX) {
+                    console.log(`🚫 [RSI-FIBO] ${symbol} SHORT blocked: daily RSI ${dailyRsi.toFixed(1)} > ${DAILY_RSI_SHORT_MAX}`);
+                    return null;
+                }
+            }
+
+            console.log(`📊 [RSI-FIBO] ${symbol} ${trigger.side} trigger: RSI=${trigger.rsiAtTrigger.toFixed(2)}, fibo786=${trigger.fibo786.toFixed(4)}`);
+            return trigger;
         } catch (error: any) {
             console.error(`❌ [RSI-FIBO] HTF check error for ${symbol}: ${error.message}`);
             return null;
@@ -187,7 +205,6 @@ export class RsiFiboStrategy implements BaseStrategy {
                 orderPlaced: true,
                 orderId: orderResult?.orderId,
                 filled: false,
-                earlyCutTriggered: false,
                 tpTriggered: false
             };
             
@@ -208,23 +225,7 @@ export class RsiFiboStrategy implements BaseStrategy {
         // Only handle filled positions
         if (!context.filled) return null;
 
-        // 1. Early Cut: 15M close breaks fibo 0.786
-        if (!context.earlyCutTriggered) {
-            const close15m = candle15m?.close || currentPrice;
-            const isBreakout = context.side === 'SHORT' 
-                ? close15m > context.fibo786 
-                : close15m < context.fibo786;
-            
-            if (isBreakout) {
-                console.log(`⚠️ [RSI-FIBO] ${position.symbol} early cut: 15M close ${close15m.toFixed(4)} broke fibo ${context.fibo786.toFixed(4)}`);
-                context.earlyCutTriggered = true;
-                this.activePositions.delete(position.symbol);
-                this.activeContexts.delete(position.symbol);
-                return { action: 'close', reason: 'EARLY_CUT' };
-            }
-        }
-
-        // 2. Hard SL (5%)
+        // 1. Hard SL (5%)
         const slHit = context.side === 'SHORT'
             ? currentPrice >= context.slPrice
             : currentPrice <= context.slPrice;
@@ -236,7 +237,7 @@ export class RsiFiboStrategy implements BaseStrategy {
             return { action: 'close', reason: 'HARD_SL' };
         }
 
-        // 3. TP: RSI 4H reaches opposite extreme
+        // 2. TP: RSI 4H reaches opposite extreme
         if (!context.tpTriggered) {
             const rsi4h = await this.getCurrentRSI(position.symbol);
             if (rsi4h !== null) {
@@ -264,8 +265,8 @@ export class RsiFiboStrategy implements BaseStrategy {
         const currentPrice = candle15m?.close || 0;
         if (currentPrice > 0) {
             const isFilled = context.side === 'SHORT'
-                ? currentPrice <= context.entryPrice
-                : currentPrice >= context.entryPrice;
+                ? currentPrice <= context.entryPrice   // SHORT: tunggu harga turun ke entry pullback
+                : currentPrice >= context.entryPrice;  // LONG: tunggu harga naik ke entry breakout
             
             if (isFilled) {
                 context.filled = true;

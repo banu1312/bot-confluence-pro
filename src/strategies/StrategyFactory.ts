@@ -1,6 +1,7 @@
 import { BaseStrategy } from './BaseStrategy';
 import { SmcStrategy } from './SmcStrategy';
 import { RsiFiboStrategy } from './RsiFiboStrategy';
+import { EmaImpulseTrailStrategy } from './EmaImpulseTrailStrategy';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -42,6 +43,8 @@ export function getStrategyInstance(symbol: string): BaseStrategy {
     let strategy: BaseStrategy;
     if (strategyName === 'smc') {
         strategy = new SmcStrategy();
+    } else if (strategyName === 'ema_impulse_trail') {
+        strategy = new EmaImpulseTrailStrategy();
     } else {
         strategy = new RsiFiboStrategy();
     }

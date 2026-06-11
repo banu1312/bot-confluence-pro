@@ -1,8 +1,10 @@
 import './server';
-import { startWebsocket, updateWatchlist } from './websocket';
+import { startWebsocket, updateWatchlist, marketData } from './websocket';
 import { Screener } from './screener';
 import { ExecutionEngine } from './execution';
 import { StateManager } from './state';
+import { getStrategyInstance } from './strategies/StrategyFactory';
+import { EmaImpulseTrailStrategy } from './strategies/EmaImpulseTrailStrategy';
 
 const RECONCILE_MS = parseInt(process.env.RECONCILE_MS || '30000', 10);
 const RESCREEN_MS = parseInt(process.env.RESCREEN_MS || (4 * 60 * 60 * 1000).toString(), 10); // 4 hours default
@@ -93,24 +95,24 @@ async function initBot() {
                 StateManager.recordPositionClosed(pos);
                 await ExecutionEngine.cancelAllPlansFor(pos);
                 StateManager.removePosition(pos.symbol);
+                const strategy = getStrategyInstance(pos.symbol);
+                if (strategy.name === 'ema_impulse_trail') {
+                    (strategy as EmaImpulseTrailStrategy).clearTrail(pos.symbol);
+                }
                 continue;
             }
 
             if (exchangeQty < pos.originalQty * 0.95 && !pos.breakevenMoved) {
                 console.log(`🎯 [TP1 HIT] ${pos.symbol}: qty ${pos.originalQty} → ${exchangeQty}`);
-                // Get current price from market data (use last close)
-                const currentPrice = pos.side === 'LONG'
-                    ? (pos.tpLevels[0] ?? pos.entryPrice * 1.01)
-                    : (pos.tpLevels[0] ?? pos.entryPrice * 0.99);
+                const lastClose = marketData[pos.symbol]?.closes5m?.slice(-1)[0];
+                const currentPrice = lastClose ?? (pos.side === 'LONG' ? pos.entryPrice * 1.01 : pos.entryPrice * 0.99);
                 await ExecutionEngine.moveSLToTrailing(pos, exchangeQty, currentPrice);
             }
 
             // Update trailing stop for positions that already have trail activated
             if (pos.trailActivated) {
-                // Get current price from market data (use last close)
-                const currentPrice = pos.side === 'LONG'
-                    ? (pos.tpLevels[0] ?? pos.entryPrice * 1.01)
-                    : (pos.tpLevels[0] ?? pos.entryPrice * 0.99);
+                const lastClose = marketData[pos.symbol]?.closes5m?.slice(-1)[0];
+                const currentPrice = lastClose ?? (pos.side === 'LONG' ? pos.entryPrice * 1.01 : pos.entryPrice * 0.99);
                 await ExecutionEngine.updateTrailingStop(pos, exchangeQty, currentPrice);
             }
         }
